@@ -22,6 +22,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { McpServers } from './mcp-convert';
+import type { PolicyStore } from './domain/policy';
 /** 查询某 serverName 是否为本项目 MCP 行及其所属工作空间（collect/面板集成用）。 */
 export declare function projectServerOwner(serverName: string): string | undefined;
 /** 最近一次会话进入的工作空间（add project 目标 + 面板展示当前工作区）。 */
@@ -45,16 +46,16 @@ export declare function scanWorkspaceMcp(root: string, warn?: (message: string) 
  * 原名超过 23 字符时截断尾部（保留头部可读性），总长收敛到 ≤32。
  */
 export declare function projectServerName(root: string, name: string): string;
-/** 安装项目 MCP 运行时：会话挂载 + 常开过滤。返回整体释放函数。 */
-export declare function installProjectMcp(ctx: Context): () => void;
+/** 安装项目 MCP 运行时：会话挂载 + 热更新。可见性由装配层按档位/工作区统一判定。返回释放函数。 */
+export declare function installProjectMcp(ctx: Context, policy: PolicyStore): () => void;
 /** 面板添加/外部修改项目 MCP 文件后，强制重扫该工作空间并同步挂载（幂等）。 */
-export declare function remountWorkspace(ctx: Context, root: string): Promise<void>;
+export declare function remountWorkspace(ctx: Context, root: string, policy: PolicyStore): Promise<void>;
 /**
  * HMR/热重载后从 state.json 反向重建 projectOwners 映射（幂等，已有数据时跳过）。
  *
  * 背景：projectOwners 是模块级内存表，插件 HMR 重载即清空，而 loader 根树上的
  * projmcp-* 行仍然存在 → 期间项目工具短暂按全局展示、项目级禁用作用域错判。
- * state.projectMcp（工作空间 → serverName → 禁用意图）保存了 owner 关系，
+ * state.json 的 projects 分区（工作空间 → serverName → 策略）保存了 owner 关系，
  * 以 loader 存活行交叉验证后重建；watcher/entries 由下次 session-start 的
  * ensureWorkspace 完整恢复。
  */

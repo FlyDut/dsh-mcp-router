@@ -2,6 +2,24 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader';
 import type { Catalog } from './catalog';
+import type { Exposure, ServerPolicy } from './domain/exposure';
+import type { ServerRef } from './domain/registry';
+/**
+ * 某一 server 对当前会话的访问判定结果。
+ * `effective` 与装配层同源（`decideExposure`），保证「模型看到的」与「能调用的」一致。
+ */
+export interface McpAccess {
+    /** 有效曝光；`off` = 不可见且不可调用。 */
+    effective: Exposure;
+    /** 生效策略（工具级禁用 + 预设关联文案用）。 */
+    policy: ServerPolicy;
+    /** 注册表引用（未知 server 时为 undefined）。 */
+    ref?: ServerRef;
+    /** 当前会话的 preset id（错误文案用）。 */
+    presetId?: string;
+    /** `off` 的成因：预设隔离 / 档位关闭 / 工作区不符 / 未知 server。 */
+    blockedBy: 'none' | 'preset' | 'exposure' | 'workspace' | 'unknown';
+}
 /**
  * 归一化 mcp_call 的 tool 参数（2026-08-22 修补）：模型可能把 mcp_search 返回的
  * 注册全名（mcp__<server>__<tool>）直接填入 tool，无条件拼接会生成双重前缀。
@@ -42,6 +60,15 @@ export interface McpControlCtx {
     persistCatalog(): Promise<void>;
     /** 按 serverName 反查 loader entry；无则 undefined。 */
     resolveEntry(serverName: string): Entry | undefined;
+    /**
+     * 访问判定：该 server 对给定 agent 的有效曝光 + 成因（与装配层同源）。
+     * agent 缺省（无会话上下文）时按「无预设、无工作区」判定。
+     */
+    accessOf(serverName: string, agent: Agent | undefined): McpAccess;
+    /** 同上，但直接给 presetId / workspace（面板按会话参数查询用）。 */
+    accessFor(serverName: string, presetId: string | undefined, workspace: string | undefined): McpAccess;
+    /** 当前 agent 运行的 preset id（错误文案与诊断用）。 */
+    presetIdOf(agent: Agent | undefined): string | undefined;
     /** server 自己的注册/调用超时（读 entry config 的 toolCallTimeoutMs，缺省回退）。 */
     serverTimeoutMs(serverName: string): number;
     /**
@@ -59,6 +86,8 @@ export interface McpControlCtx {
     snapshotEnabled(): Promise<void>;
 }
 export interface McpCallController {
+    /** 访问判定（面板/诊断用；与装配层同源）。 */
+    accessFor(serverName: string, presetId: string | undefined, workspace: string | undefined): McpAccess;
     /** 保活启用：disabled 时开启并记录 AI owner。返回本次是否由 AI 开启。 */
     ensureEnabled(serverName: string): Promise<boolean>;
     /** 该 server 当前是否由 AI 临时启用（mcp_call 保活中）——装配过滤据此保持其不可见。 */

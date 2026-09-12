@@ -1,43 +1,57 @@
 /**
  * Host/Client 共享的类型定义（单一来源）。
  *
- * 面板视图形状（McpRow/McpView/SkillRow/SkillsView）同时被 host 的 collect.ts
- * 产出与 client 的 views.tsx 消费 —— 集中定义避免两端各自声明导致漂移
- * （v0.4.2 加 modelVisible/autoManage 时曾需要两边同步改）。
+ * 面板视图形状（McpRow / McpView / PresetListView）同时被 host 的 collect.ts 产出与
+ * client 的 panel.tsx 消费 —— 集中定义避免两端各自声明导致漂移。
  * 纯类型文件：type-only import 不产生任何打包产物。
  */
+import type { Exposure, PresetScope } from './domain/exposure';
+export type { Exposure, PresetMode, PresetScope } from './domain/exposure';
 export type McpStatus = 'active' | 'disabled' | 'idle' | 'failed';
+/** 行来源：loader 行 / 预设 standing 行 / 项目级（工作空间）行。 */
+export type McpSource = 'loader' | 'preset' | 'project';
+/** 单个工具的展示信息（面板工具级禁用用）。 */
+export interface McpToolInfo {
+    /** 工具注册全名 `mcp__<server>__<tool>`。 */
+    name: string;
+    description: string;
+    disabled: boolean;
+}
 export interface McpRow {
     entryId: string;
     rowId: string;
     serverName: string;
     transport: string | null;
+    /** loader 行/预设行当前是否停用（= 进程期望关闭）。 */
     disabled: boolean;
+    /** 进程当前是否在跑。 */
     running: boolean;
+    /** 工具数（停用态用 catalog 快照回填）。 */
     tools: number;
+    /** token 估算（停用态用 catalog 快照回填）。 */
     tokens: number;
     status: McpStatus;
-    /** 模型是否可见（autoManage 下：启用且非 AI 临时启用 → 可见；关闭模式下全部启用可见）。 */
+    /** 用户意图档位（四档之一）。 */
+    exposure: Exposure;
+    /** 当前对该面板会话生效的档位（含预设隔离与运行态降级）。 */
+    effectiveExposure: Exposure;
+    /** 预设关联配置。 */
+    presetScope: PresetScope;
+    /** 当前会话的 preset 是否被允许（false = 运行时隔离命中）。 */
+    presetAllowed: boolean;
+    /** 模型是否直接看到工具（effective === native）。 */
     modelVisible: boolean;
-    /** 宿主侧期望状态（next-session 模式下可能与 disabled 不同）。 */
-    desired?: boolean;
-    /** true = 已记录意图但尚未在运行时生效（待下次会话/重启）。 */
+    /** 是否只暴露服务器名（effective === name-only）。 */
+    nameOnly: boolean;
+    /** 是否存在待生效变更（next-session 模式）。 */
     pending?: boolean;
-    /** 项目级 MCP 行：所属工作空间根（<workspace>/.dsh/mcps 所在目录）；缺省 = 全局行。 */
+    /** 是否已被用户显式配置过（false = 使用默认档位）。 */
+    configured?: boolean;
+    source: McpSource;
+    /** 项目级 MCP 所属工作空间。 */
     workspace?: string;
-    /**
-     * 行来源（rc.1 standing 组合兜底新增）：
-     * - 'live' = ctx.loader.entries() 真实行（可 toggle/entry.update）
-     * - 'preset' = compositionInventory standing 快照行（rc.1 preset 行不在 loader.entries，
-     *   开关走 state.json desired 意图 + 下次启动物化，面板置 pending）
-     */
-    source?: 'live' | 'preset';
-    /** 该 server 的工具列表（面板工具级禁用用；null = 该 server 暂无工具目录）。 */
-    toolList?: Array<{
-        name: string;
-        description: string;
-        disabled: boolean;
-    }> | null;
+    /** 该 server 的工具列表（面板工具级禁用用；null = 暂无目录）。 */
+    toolList?: McpToolInfo[] | null;
 }
 export interface McpView {
     sessionId: string | null;
@@ -47,26 +61,32 @@ export interface McpView {
     activeWorkspace: string | null;
     mcp: McpRow[];
     mcpTotal: number;
+    /** 档位为 off 的服务器数。 */
     mcpDisabled: number;
+    /** 当前生效为 native 的服务器数。 */
+    mcpNative: number;
+    /** 当前生效为 name-only 的服务器数。 */
+    mcpNameOnly: number;
+    /** 当前生效为 hidden 的服务器数。 */
+    mcpHidden: number;
     mcpToolsTotal: number;
     mcpTokensTotal: number;
-    /** AI 中间层当前是否生效（面板开关）。 */
-    autoManage: boolean;
     errors: string[];
 }
-export interface SkillRow {
-    name: string;
-    description: string;
-    source: string;
-    modelInvocable: boolean;
-    userInvocable: boolean;
+/** 可关联的 agent 预设（面板预设关联控件用）。 */
+export interface PresetOption {
+    id: string;
+    name?: string;
+    description?: string;
+    /** 是否为「未指定预设时的默认预设」。 */
+    isDefault?: boolean;
+    /** 该预设当前不可组合的原因（存在时面板标注）。 */
+    broken?: string;
 }
-export interface SkillsView {
-    sessionId: string | null;
-    preset: string | null;
-    cwd: string | null;
-    skills: SkillRow[];
-    skillsTotal: number;
-    skillsModelVisible: number;
-    errors: string[];
+export interface PresetListView {
+    presets: PresetOption[];
+    /** 当前面板会话运行的预设 id。 */
+    current: string | null;
+    /** 预设列表不可得时的降级说明（面板提示，不阻塞其他功能）。 */
+    error?: string;
 }

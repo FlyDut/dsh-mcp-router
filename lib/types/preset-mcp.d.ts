@@ -19,6 +19,15 @@ export interface PresetMcpParsed {
     toolCallTimeoutMs?: number;
 }
 /**
+ * 从 preset 组合文件文本解析某 rowId 的 serverName（v1 状态迁移用）。
+ *
+ * @param text - 组合文件文本；`null` 表示文件不可读 → 回落命名约定（`mcp-x` → `x`，
+ *   已知例外 `mcp-anki` → `anki-mcp`）。
+ * @returns serverName；文件可读但**不含该行**时返回 undefined（该行已失效，调用方
+ *   应记入 unresolved 而非猜测）。
+ */
+export declare function firstMatchServerName(text: string | null, rowId: string): string | undefined;
+/**
  * 解析 preset 组合文本，抽取全部 `mcp-*` 行的 serverName/transport/超时。
  * 纯文本正则（preset 文件结构稳定）：按 `^- id:` 切块，块内抓三个键。
  * 键锚定行首（防注释/长键误命中）；值允许可选双引号（YAML `"stdio"` 形态）。
@@ -39,6 +48,10 @@ export interface PresetMcpRow {
     /** preset 组合文件绝对路径（state.json mcp 段的文件键）。 */
     file: string;
 }
+/** 带所属 preset id 的行（全量扫描用）。 */
+export interface PresetMcpRowWithPreset extends PresetMcpRow {
+    presetId: string;
+}
 /**
  * 列出某 preset 在 standing 组合中的全部 MCP 行。
  * inventory 给 entryId/enabled/fiberState，preset 文本给 serverName/transport/超时。
@@ -47,6 +60,14 @@ export declare function listPresetMcpRows(ctx: Context, presetId: string): Promi
     rows: PresetMcpRow[];
     presetPath: string;
 }>;
+/**
+ * 全量列出**所有** preset 的 standing MCP 行（注册表快照用）。
+ *
+ * 装配必须按「当前会话的 preset」精确判定一个 MCP 行的运行状态，而 rc.1 下这些行
+ * 不在 `ctx.loader.entries()` 里，只能一次扫全量再按 presetId 分桶。无 MCP 行的
+ * preset 直接跳过（避免无谓的 read 与文件 IO）。
+ */
+export declare function listAllPresetMcpRows(ctx: Context): Promise<PresetMcpRowWithPreset[]>;
 /**
  * 按长 entryId 反查其所属 preset 行（toggleMcp 预设兜底用）。
  * 逐 preset 找 entryId 命中，找到即 resolve+read+parse 该 preset。
