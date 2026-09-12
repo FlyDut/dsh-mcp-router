@@ -201,6 +201,7 @@ node scripts/selftest-mcp.mjs        # catalog search / composition text / proje
 - **Import from other agents**: scans opencode / zcode / Claude Code / Cursor / Gemini CLI / project `.mcp.json` (plus custom paths), sniffs formats (`mcpServers` / `mcp` / `mcp.servers` / `servers` / bare map) and normalises fields (`type: local|remote`, array `command`, `environment` → `env`); the level can be set during import
 - **Read-only protection**: rows declared in an agent preset composition are badged read-only with the reason and an alternative
 - **Dynamic-expression protection**: `!!js` fields stay read-only in the form and verbatim on disk, so an imported `${VAR}` never becomes a plaintext secret
+- **Error surfacing**: when the server answers with something that is not JSON — most commonly "plugin updated but dsh web not restarted" (client assets are read from disk per request, host-side code loads at startup) — the panel now says "restart dsh web and retry" instead of the browser-native `JSON.parse: unexpected keyword`
 - **Fixes (inherited from v0.6.0)**: global-row disable state was never persisted (root-tree rows must materialise into the sibling `cordis.patch.yml`); "no `disabled` key" was mistaken for "row missing", so flags could never be written; composition text editing only matched unindented `- id:` lines
 
 ### v0.6.0 — four exposure levels + preset runtime isolation (breaking)

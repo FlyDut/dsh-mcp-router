@@ -251,6 +251,7 @@ node scripts/selftest-mcp.mjs        # catalog 检索 / 组合文件文本 / 项
   1. 全局行（profile patch 行）的「停用」状态从未写回文件 —— loader 里这些行归属根树 `cordis.yml`，物化时必须落到同目录的 `cordis.patch.yml`，否则重启后「隐藏/关闭」档位的进程又跑起来
   2. 「文件中无 disabled 键」被误判成「行不存在」，导致标志永远写不进去（`null` 歧义）
   3. 组合文件的文本操作只认行首 `- id:`，对 patch 文件的缩进行无效
+- **错误提示**：服务端返回非 JSON（最典型的是「插件已更新但 dsh web 未重启」—— 客户端资源按请求从磁盘读取，host 代码在启动时加载）时，面板给出「请重启 dsh web 后重试」的明确指引，而不是浏览器原生的 `JSON.parse: unexpected keyword` 报错
 
 ### v0.6.0 — 四档曝光 + 预设运行时隔离（破坏性重构）
 

@@ -7,6 +7,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { McpRow } from '../shared-types'
+import { describeError, readJson } from './http'
 
 interface Props {
   t: (key: string, params?: Record<string, string | number>) => string
@@ -186,7 +187,7 @@ export function EditMcpModal(props: Props): React.ReactElement {
     const query = new URLSearchParams({ serverName: row.serverName })
     if (row.workspace) query.set('workspace', row.workspace)
     fetch(`/api/mcp-panel/mcp/detail?${query.toString()}`)
-      .then((res) => res.json() as Promise<{ ok: boolean; error?: string } & Partial<Detail>>)
+      .then((res) => readJson<{ ok: boolean; error?: string } & Partial<Detail>>(res))
       .then((body) => {
         if (!body.ok) throw new Error(body.error ?? 'detail failed')
         const data = body as Detail
@@ -202,8 +203,8 @@ export function EditMcpModal(props: Props): React.ReactElement {
         setHeadersText(fromDict(config.headers))
         setTimeoutText(config.toolCallTimeoutMs !== undefined ? String(config.toolCallTimeoutMs) : '')
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-  }, [row.serverName, row.workspace])
+      .catch((err: unknown) => setError(describeError(err, t)))
+  }, [row.serverName, row.workspace, t])
 
   const dynamicKeys = new Set((detail?.keys ?? []).filter((key) => key.dynamic).map((key) => key.name))
   const envDynamic = dynamicKeys.has('env')
@@ -233,12 +234,12 @@ export function EditMcpModal(props: Props): React.ReactElement {
         headers,
         body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace, patch }),
       })
-      const body = (await res.json()) as { ok: boolean; error?: string }
+      const body = await readJson<{ ok: boolean; error?: string }>(res)
       if (!body.ok) throw new Error(body.error ?? 'update failed')
       onSaved()
       onClose()
     } catch (err) {
-      setError(t('mp.editError', { error: err instanceof Error ? err.message : String(err) }))
+      setError(t('mp.editError', { error: describeError(err, t) }))
     } finally {
       setBusy(false)
     }

@@ -138,6 +138,8 @@ export const en: Record<string, string> = {
   'mp.importDone': 'Imported {n} MCP(s). {skipped}',
   'mp.importSkipped': 'Skipped (existing/failed): {names}',
   'mp.importError': 'Import failed: {error}',
+  'mp.errNotJson':
+    'The server did not return JSON (HTTP {status}). This usually means the plugin was updated but dsh web has not been restarted — client assets are read from disk per request, while host-side code loads at startup. Restart dsh web and retry.',
 }
 
 export const zh: Record<string, string> = {
@@ -268,4 +270,6 @@ export const zh: Record<string, string> = {
   'mp.importDone': '已导入 {n} 个 MCP。{skipped}',
   'mp.importSkipped': '跳过（已存在/失败）：{names}',
   'mp.importError': '导入失败：{error}',
+  'mp.errNotJson':
+    '服务端没有返回 JSON（HTTP {status}）。通常是插件已更新但 dsh web 尚未重启：客户端资源是按请求从磁盘读取的，而 host 侧代码在启动时加载。请重启 dsh web 后重试。',
 }

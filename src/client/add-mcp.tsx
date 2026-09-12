@@ -8,6 +8,7 @@
  * 样式走宿主 --dsw-alias-* 主题变量（与 views.tsx 一致），本地私有 C，不导出。
  */
 import React, { useCallback, useRef, useState } from 'react'
+import { describeError, readJson } from './http'
 
 interface Props {
   /** locale 翻译函数（由父级传入，保持与宿主 locale 插槽一致）。 */
@@ -180,7 +181,7 @@ export function AddMcpModal(props: Props): React.ReactElement {
       const headers: Record<string, string> = { 'content-type': 'application/json' }
       if (token) headers['x-panel-token'] = token
       const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(payload) })
-      return (await res.json()) as { ok: boolean; [key: string]: unknown }
+      return await readJson<{ ok: boolean; [key: string]: unknown }>(res)
     },
     [ensureToken],
   )
@@ -196,7 +197,7 @@ export function AddMcpModal(props: Props): React.ReactElement {
       }
       setPreview({ names: Array.isArray(body.names) ? (body.names as string[]) : [], yaml: body.yaml })
     } catch (error) {
-      setResult({ ok: false, text: t('mp.addMcpError', { error: error instanceof Error ? error.message : String(error) }) })
+      setResult({ ok: false, text: t('mp.addMcpError', { error: describeError(error, t) }) })
     } finally {
       setBusy(null)
     }
@@ -219,7 +220,7 @@ export function AddMcpModal(props: Props): React.ReactElement {
       onClose()
     } catch (error) {
       // 失败：留在弹窗内展示原因（JSON 转换失败、已全部存在、挂载失败等）
-      setResult({ ok: false, text: t('mp.addMcpError', { error: error instanceof Error ? error.message : String(error) }) })
+      setResult({ ok: false, text: t('mp.addMcpError', { error: describeError(error, t) }) })
     } finally {
       setBusy(null)
     }

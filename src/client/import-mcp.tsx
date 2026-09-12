@@ -8,6 +8,7 @@
  * 扫描是**只读**的：面板不会修改任何源文件，也不会同步源文件后续变化（一次性快照）。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { describeError, readJson } from './http'
 
 interface Props {
   t: (key: string, params?: Record<string, string | number>) => string
@@ -198,16 +199,16 @@ export function ImportMcpModal(props: Props): React.ReactElement {
           headers: await authHeaders(),
           body: JSON.stringify({ paths: extraPaths }),
         })
-        const body = (await res.json()) as { ok: boolean; error?: string; sources?: ScanSource[] }
+        const body = await readJson<{ ok: boolean; error?: string; sources?: ScanSource[] }>(res)
         if (!body.ok) throw new Error(body.error ?? 'scan failed')
         setSources(body.sources ?? [])
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        setError(describeError(err, t))
       } finally {
         setScanning(false)
       }
     },
-    [authHeaders],
+    [authHeaders, t],
   )
 
   useEffect(() => {
@@ -238,13 +239,13 @@ export function ImportMcpModal(props: Props): React.ReactElement {
         headers: await authHeaders(),
         body: JSON.stringify({ json: JSON.stringify({ mcpServers }), target }),
       })
-      const body = (await res.json()) as {
+      const body = await readJson<{
         ok: boolean
         error?: string
         added?: number
         skipped?: string[]
         names?: string[]
-      }
+      }>(res)
       if (!body.ok) throw new Error(body.error ?? 'import failed')
       const names = body.names ?? chosen.map((server) => server.name)
       // 导入后统一设档位（原生注入以外的档位才有必要写策略）
@@ -265,7 +266,7 @@ export function ImportMcpModal(props: Props): React.ReactElement {
       onImported()
       await scan()
     } catch (err) {
-      setError(t('mp.importError', { error: err instanceof Error ? err.message : String(err) }))
+      setError(t('mp.importError', { error: describeError(err, t) }))
     } finally {
       setImporting(false)
     }

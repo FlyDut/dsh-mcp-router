@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { McpRow, McpToolInfo, McpView, PresetListView, PresetOption } from '../shared-types'
 import { AddMcpModal } from './add-mcp'
+import { describeError, readJson } from './http'
 import { EditMcpModal } from './edit-mcp'
 import { ImportMcpModal } from './import-mcp'
 import { ServerCard } from './server-card'
@@ -189,35 +190,36 @@ export function McpPanelSection(props: Props): React.ReactElement {
     const current = ++seq.current
     setError(null)
     fetch('/api/mcp-panel/state')
-      .then((res) => res.json() as Promise<{ ok: boolean; state?: McpView; error?: string }>)
+      .then((res) => readJson<{ ok: boolean; state?: McpView; error?: string }>(res))
       .then((body) => {
         if (!body.ok || !body.state) throw new Error(body.error ?? 'bad response')
         if (current !== seq.current) return
         setView(body.state)
       })
       .catch((err: unknown) => {
-        if (current === seq.current) setError(err instanceof Error ? err.message : String(err))
+        if (current === seq.current) setError(describeError(err, t))
       })
-  }, [])
+  }, [t])
 
   const loadPresets = useCallback(() => {
     fetch('/api/mcp-panel/presets')
-      .then((res) => res.json() as Promise<{ ok: boolean } & Partial<PresetListView>>)
+      .then((res) => readJson<{ ok: boolean } & Partial<PresetListView>>(res))
       .then((body) => {
         if (!body.ok) return
         setPresets(body.presets ?? [])
         setPresetsError(body.error)
       })
-      .catch(() => {
-        /* 预设列表不可得：面板降级为「仅显示已配置 id」，不影响其它功能 */
+      .catch((err: unknown) => {
+        // 预设列表不可得（服务视图受限 / 插件未重启）：降级为「仅显示已配置 id」，不影响其它功能
+        setPresetsError(describeError(err, t))
       })
-  }, [])
+  }, [t])
 
   useEffect(() => {
     load()
     loadPresets()
     fetch('/api/mcp-panel/config')
-      .then((r) => r.json() as Promise<{ ok: boolean; applyMode?: ApplyMode; defaultExposure?: string }>)
+      .then((r) => readJson<{ ok: boolean; applyMode?: ApplyMode; defaultExposure?: string }>(r))
       .then((b) => {
         if (b.ok && b.applyMode) setApplyMode(b.applyMode)
         if (b.ok && typeof b.defaultExposure === 'string') setDefaultExposure(b.defaultExposure)
@@ -266,14 +268,14 @@ export function McpPanelSection(props: Props): React.ReactElement {
         headers,
         body: JSON.stringify({ updates: merged }),
       })
-      const body = (await res.json()) as { ok: boolean; error?: string; failed?: number; failures?: Array<{ error: string }> }
+      const body = await readJson<{ ok: boolean; error?: string; failed?: number; failures?: Array<{ error: string }> }>(res)
       if (!body.ok) throw new Error(body.error ?? 'policy update failed')
       if (body.failed && body.failed > 0) {
         setError(t('mp.toggleError', { error: body.failures?.[0]?.error ?? `${body.failed} failed` }))
       }
       load()
     } catch (err) {
-      setError(t('mp.toggleError', { error: err instanceof Error ? err.message : String(err) }))
+      setError(t('mp.toggleError', { error: describeError(err, t) }))
       load()
     } finally {
       setBusy((prev) => {
@@ -321,11 +323,11 @@ export function McpPanelSection(props: Props): React.ReactElement {
           headers,
           body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace, toolName: tool.name, disabled: !tool.disabled }),
         })
-        const body = (await res.json()) as { ok: boolean; error?: string }
+        const body = await readJson<{ ok: boolean; error?: string }>(res)
         if (!body.ok) throw new Error(body.error ?? 'tool toggle failed')
         load()
       } catch (err) {
-        setError(t('mp.toggleError', { error: err instanceof Error ? err.message : String(err) }))
+        setError(t('mp.toggleError', { error: describeError(err, t) }))
         load()
       } finally {
         setToolBusy((prev) => ({ ...prev, [key]: false }))
@@ -343,12 +345,12 @@ export function McpPanelSection(props: Props): React.ReactElement {
       if (token) headers['x-panel-token'] = token
       try {
         const res = await fetch('/api/mcp-panel/config', { method: 'POST', headers, body: JSON.stringify({ applyMode: mode }) })
-        const body = (await res.json()) as { ok: boolean; applyMode?: ApplyMode; error?: string }
+        const body = await readJson<{ ok: boolean; applyMode?: ApplyMode; error?: string }>(res)
         if (!body.ok) throw new Error(body.error ?? 'config update failed')
         setApplyMode(body.applyMode ?? mode)
         load()
       } catch (err) {
-        setError(t('mp.toggleError', { error: err instanceof Error ? err.message : String(err) }))
+        setError(t('mp.toggleError', { error: describeError(err, t) }))
       } finally {
         setBusy((prev) => ({ ...prev, applyMode: false }))
       }
@@ -364,12 +366,12 @@ export function McpPanelSection(props: Props): React.ReactElement {
     if (token) headers['x-panel-token'] = token
     try {
       const res = await fetch('/api/mcp-panel/policy/commit', { method: 'POST', headers })
-      const body = (await res.json()) as { ok: boolean; applied?: number; error?: string }
+      const body = await readJson<{ ok: boolean; applied?: number; error?: string }>(res)
       if (!body.ok) throw new Error(body.error ?? 'commit failed')
       load()
       showWarn(t('mp.appliedPending', { n: body.applied ?? 0 }), false)
     } catch (err) {
-      setError(t('mp.toggleError', { error: err instanceof Error ? err.message : String(err) }))
+      setError(t('mp.toggleError', { error: describeError(err, t) }))
     } finally {
       setBusy((prev) => ({ ...prev, commit: false }))
     }
@@ -389,12 +391,12 @@ export function McpPanelSection(props: Props): React.ReactElement {
         headers,
         body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace }),
       })
-      const body = (await res.json()) as { ok: boolean; error?: string; file?: string }
+      const body = await readJson<{ ok: boolean; error?: string; file?: string }>(res)
       if (!body.ok) throw new Error(body.error ?? 'remove failed')
       setRemoving(null)
       load()
     } catch (err) {
-      setError(t('mp.removeError', { error: err instanceof Error ? err.message : String(err) }))
+      setError(t('mp.removeError', { error: describeError(err, t) }))
     } finally {
       setRemovingBusy(false)
     }
