@@ -1,6 +1,6 @@
 <p align="center">
-  <strong style="font-size: 2.2em">🧩 MCP & Skill Manager</strong><br>
-  <span style="font-size: 1.1em">DeepSeek Harness (DSH) Web plugin · Real-time enable/disable for MCP servers & Skill catalog · Optional AI middle layer (on-demand calls)</span>
+  <strong style="font-size: 2.2em">🧩 MCP Manager</strong><br>
+  <span style="font-size: 1.1em">DeepSeek Harness (DSH) Web plugin · Four exposure levels per MCP · Runtime isolation by agent preset · On-demand calls that cost no context</span>
 </p>
 
 <p align="center">
@@ -9,214 +9,180 @@
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.5.0-green.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.6.0-green.svg">
 </p>
 
 ---
 
 ## ✨ What it is
 
-A settings-page panel that turns your **MCP servers** and **Skill catalog** into an actionable list: one toggle per entry — **disabling releases context usage instantly, enabling works without a restart**. It also ships an optional **AI middle layer** (`autoManage`): disabled MCP servers stay hidden from the model and are called on demand, while servers *you* enabled stay visible — your toggles decide exactly what the model context pays for.
+A settings panel that gives every MCP server an **exposure level** (how much of it enters the context) and a **preset scope** (which sessions may use it).
 
-![MCP Manager panel](docs/images/mcp-panel.jpg)
+Injecting everything eats your context; turning everything off makes MCPs useless when you need them. So "how much does this MCP expose to the model" becomes one level per server, and "which sessions may use it" becomes a preset scope. Servers that are not injected stay reachable on demand through `mcp_search` / `mcp_call`.
 
-## 🎯 Core features
+![MCP panel](docs/images/mcp-panel.jpg)
 
-| Feature | Description |
+## 🎚️ Four exposure levels
+
+| Level | Process | Context injection | `mcp_search` | `mcp_call` |
+| --- | --- | --- | --- | --- |
+| **Native** `native` | running | every `mcp__<server>__*` tool schema | listed in the summary (marked injected) | callable |
+| **Name only** `name-only` | running | just one line: server name + summary | listed in the summary | callable (omit the tool name to get the tool list) |
+| **Hidden** `hidden` | stopped (keep-alive enabled on demand, reaped when idle) | nothing | returned only on a keyword hit | callable |
+| **Off** `off` | stopped | nothing | never appears | refused |
+
+A level decides two things at once: **whether the process runs** (native/name-only = running, hidden/off = stopped) and **how much enters the context**. It is the only state control you need.
+
+## 🧩 Preset scope (runtime isolation)
+
+| Mode | Meaning | Session without a preset |
+| --- | --- | --- |
+| All presets `all` (default) | available to every session | available |
+| Only these `only` | available only to the listed presets | unavailable |
+| All except `except` | available to every other preset | available |
+
+A preset-isolated server **keeps running in the background**: sessions on other presets cannot see it, `mcp_search` does not return it, and `mcp_call` refuses it. All three checks share one function, so you never get "visible but uncallable" or the reverse.
+
+> This is exactly the "one session uses this MCP, another does not" case — without toggling processes back and forth and without a restart.
+
+## 🎯 Capabilities
+
+| Capability | Detail |
 | --- | --- |
-| 🟢 **Real-time MCP toggle** | Disable → loader entry is disposed (connection closed + all `mcp__<server>__*` tools unregistered), tools disappear from the model catalog immediately and their schema tokens are freed; enable → reconnect + tools restored, **no restart** |
-| 🧠 **Skill toggle** | Injects/removes `disable-model-invocation: true` in SKILL.md frontmatter; the model catalog updates in real time |
-| 📊 **Backfill while disabled** | Disabled MCP cards still show "N tools / ~N tokens in catalog" (last-good snapshot from the private catalog), so you can decide whether re-enabling is worth the context cost |
-| 🤖 **AI middle layer (optional switch)** | With `autoManage` on: **disabled MCP servers are hidden from the model** and used on demand via `mcp_search` (top-K catalog search with exact schemas) and `mcp_call` (keep-alive enable → in-plugin execute → idle 30s auto reaping); **servers you enabled stay visible** (e.g. memory for high-sensitivity recall, filesystem for direct IO); AI-temporarily-enabled servers never pollute context |
-| 🔒 **Your toggles are never overridden by the model** | The reaper only reclaims servers that *AI* enabled from a disabled state; servers you manually enabled are never auto-disabled (toggle clears AI marks) |
-| 💾 **Survives restarts** | MCP state is materialized into the preset composition file via the plugin state file (`~/.dsh/dsh-mcp-skill-panel/state.json`); catalog snapshots persist (`catalog.json`) and backfill after restart |
-| ⚡ **Fast** | Toggles flip instantly (optimistic UI + server confirmation); domain caches with event-driven invalidation (`tools/change` / `skills/change`); the MCP tab never triggers skill discovery |
-| 🌐 **Bilingual UI** | All copy zh/en, follows the DSH UI language; light/dark theme aware |
-| 🪶 **Zero context footprint** | The plugin itself registers no model tools and consumes no injection surface (with the switch off it behaves like it isn't installed) |
-
-## 🏗️ Two modes (the "AI Middle Layer" switch in the panel)
-
-```mermaid
-stateDiagram-v2
-    [*] --> Mode1Direct: autoManage off
-    [*] --> Mode2Middle: autoManage on
-    Mode1Direct --> Mode2Middle: panel switch / POST /config
-    Mode2Middle --> Mode1Direct: panel switch / POST /config
-
-    state Mode1Direct {
-        direction LR
-        M1: Model uses native tools of every enabled MCP directly (mcp__*)
-        M1a: Enable/disable only via the panel
-    }
-    state Mode2Middle {
-        direction LR
-        M2: Disabled MCP servers hidden from model
-        M2a: Model calls them on demand via mcp_search / mcp_call
-        M2b: Servers you enabled stay visible
-        M2c: AI-temporarily-enabled servers never pollute context
-    }
-```
-
-Assembly filtering in mode 2 (evaluated every turn):
-
-```mermaid
-flowchart TD
-    A[system-prompt/assemble] --> B{name starts with mcp__?}
-    B -- no --> K[keep: enters model context]
-    B -- yes --> C{parse server}
-    C -- fail --> K
-    C -- ok --> D{server state?}
-    D -- user-enabled disabled=false and not AI-enabled --> K
-    D -- user-disabled disabled=true --> F[filter out: hidden from model]
-    D -- AI-temporary mcp_call keep-alive --> F
-    F --> G[when needed: mcp_search / mcp_call on demand]
-```
+| 🤖 **Always-on middle layer** | `mcp_search` (catalog retrieval) + `mcp_call` (keep-alive enable → call → idle reap); an unknown tool name makes `mcp_call` return that server's tool list |
+| 🛠️ **Per-tool disable** | Fine-grained control above the server level; disabled tools leave retrieval and are refused on call |
+| 📊 **Stopped-state backfill** | Hidden/off servers still show "N tools, ~N tokens" from the private last-good catalog snapshot |
+| 📁 **Project-level MCP** | Reads `<workspace>/.dsh/mcps/**/mcp.json`, visible **only to sessions of that workspace**; hot-reloaded on file change |
+| ➕ **Quick migration** | Paste another harness's `mcpServers` JSON (Claude Code, …) → preview → add as global (profile patch) or project (`.dsh/mcps/mcp.json`) |
+| ⏱️ **Apply timing** | "Immediate" (next turn, with a cache-cost warning) or "Next session" (zero cache invalidation for the current session) |
+| 💾 **Survives restart** | Policies persist to `~/.dsh/dsh-mcp-panel/state.json`; enable/disable intent is materialized into compositions at early startup |
+| 🌐 **Bilingual UI** | All strings in zh/en, following the DSH interface language; light/dark themes |
+| 🪶 **No standing context** | Registers no model tools beyond the two middle-layer ones; hidden/off MCPs cost no context |
 
 ## 📦 Install
 
 ```sh
-dsh plugin --profile web add "github:lilyblessing/dsh-mcp-skill-panel#main"
+dsh plugin --profile web add "github:lilyblessing/dsh-mcp-panel#main"
 ```
 
-Prebuilt artifacts are committed (`lib/`), so the git-source one-liner installs without a build step. **Restart `dsh web`** after installing (bundles are composed at startup; hot reload does not apply), then open Settings → **MCP & Skill Manager**.
+Artifacts are committed (`lib/`), so a git source installs in one line with no build authorization. **Restart `dsh web`** afterwards (the bundle layer is composed at startup; hot reload does not apply), then the settings page shows "MCP Manager".
 
-> 📦 Also published on **npm**: `dsh-mcp-skill-panel` ([npm page](https://www.npmjs.com/package/dsh-mcp-skill-panel)). The npm release ships prebuilt artifacts and can be installed by package name, skipping the `allowBuilds` approval; the git-source one-liner above always works.
+> 📦 Published on **npm** as `dsh-mcp-panel`.
+
+### Upgrading from 0.5.x (dsh-mcp-skill-panel)
+
+1. **The skill feature is gone** (use a dedicated skill-manager plugin); the panel entry is now "MCP Manager".
+2. **Package name and mount id changed** — reinstall once in the profile:
+
+```sh
+cd ~/.dsh/profiles/web
+pnpm remove dsh-mcp-skill-panel
+pnpm add "file:/path/to/dsh-mcp-panel"     # or github:lilyblessing/dsh-mcp-panel#main
+# and rename dsh-mcp-skill-panel → dsh-mcp-panel in package.json's dsh.profile.bundles
+```
+
+3. **Data directory migrates automatically**: when `~/.dsh/dsh-mcp-panel/state.json` is absent, `state.json` and `catalog.json` are moved over from `~/.dsh/dsh-mcp-skill-panel/`.
+4. **Policy structure migrates v1 → v2** (old `autoManage` + toggles + per-tool disables → per-server level + preset scope + disabled tools); the original file is backed up as `state.v1.json`:
+
+   | Old state | New level |
+   | --- | --- |
+   | disabled + old `autoManage: true` | **hidden** (keeps "callable on demand") |
+   | disabled + old `autoManage: false` | **off** |
+   | enabled | **native** |
 
 ## 🚀 Usage
 
-1. Settings → **MCP & Skill Manager**
-2. **MCP Servers** tab: each card shows server name, status badge (Active / Disabled / No tools / Failed), a **model-visibility badge** (in middle-layer mode: user-enabled = visible, disabled / AI-temporary = hidden), tool count and estimated token usage; toggle with the button on the right
-3. **Skills** tab: each card shows name, source, description, model-visibility badge; toggle on the right
-4. **AI Middle Layer switch**: on → disabled MCP servers are used on demand by the model (see modes above); off → classic direct mode
-5. **Manual management** (optional): edit the preset composition file (`disabled: true` rows) or SKILL.md frontmatter (`disable-model-invocation: true`) directly — takes effect on next restart/change
+1. Settings → **MCP Manager**
+2. Each card: server name, status badge, the **four-level selector**, stats (tools, token estimate, transport, workspace)
+3. **Level selector**: Native / Name only / Hidden / Off — click to apply (immediate mode warns about the cache cost)
+4. **Preset scope** (collapsible): All presets / Only these / All except + a preset multi-select. Deleted preset ids are marked "no longer exists" but never silently dropped from your config
+5. **Tools** (collapsible): enable/disable individual tools of that server
+6. **Apply timing**: switch between "Immediate" and "Next session"; pending intents in the latter can be forced with "Apply pending now"
+7. **Add MCP**: paste `mcpServers` JSON, pick the global/project target, confirm
 
-> Badge meanings: 🟢 Active (has tools) / ⚪ Disabled / 🟡 No tools (process running but empty tool list — usually a failed server start or empty implementation) / 🔴 Failed (neither running nor disabled).
+> Status badges: 🟢 Running (has tools) / ⚪ Stopped (level is hidden or off) / 🟡 No tools (process up, tool list empty) / 🔴 Not running (expected to run but the process is down — usually a failed server start).
 
 ## 🔌 HTTP API
 
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/api/mcp-skill-panel/state?session=<id>&part=<mcp\|skills\|all>` | Catalog snapshot; `part` scopes the fetch (the UI lazy-loads per tab), defaults to `all`; without session, the first root agent is used |
-| POST | `/api/mcp-skill-panel/mcp/toggle` | `{ entryId, disabled }` |
-| POST | `/api/mcp-skill-panel/skill/toggle` | `{ name, disabled }` |
-| GET | `/api/mcp-skill-panel/config` | Read the AI middle layer switch state |
-| POST | `/api/mcp-skill-panel/config` | `{ autoManage: boolean }` toggle the AI middle layer (persisted to state.json) |
-| GET | `/api/mcp-skill-panel/debug` | Catalog collection diagnostics (event counters / snapshot telemetry / in-memory catalog summary) |
-| POST | `/api/mcp-skill-panel/debug/collect` | Trigger one catalog snapshot manually |
-| GET | `/api/mcp-skill-panel/token` | Per-process random token (the panel fetches it and attaches `x-panel-token` on every POST) |
+Prefix `/api/mcp-panel` (the legacy prefixes `/api/mcp-skill-panel` and `/api/runtime-inventory` still work).
 
-> **Write auth (0.4.7+)**: every POST (mcp/skill toggle, config, debug/collect) requires an `x-panel-token` header equal to the per-process random token, else 401 — this blocks cross-origin / DNS-rebinding blind writes to the local control endpoints; read-only GET endpoints (state/config/debug/token) stay open.
-> The legacy prefix `/api/runtime-inventory/*` (≤0.3.1) is still registered for compatibility. Domain caches (60s TTL fallback) are invalidated precisely by events: `tools/change` / `loader/partial-dispose` → MCP domain; `skills/change` → Skill domain.
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/state?session=<id>` | Panel view (registry rows × policy × effective level after preset isolation) |
+| GET | `/presets?session=<id>` | Agent presets available for scoping |
+| POST | `/policy` | `{ updates: [{ serverName, workspace?, exposure?, presets?, disabledTools? }] }` batch policy write |
+| POST | `/policy/commit` | Force pending "next session" intents to take effect now (costs a cache miss) |
+| POST | `/mcp/toolToggle` | `{ serverName, workspace?, toolName, disabled }` per-tool disable |
+| GET / POST | `/config` | Read / write apply timing |
+| POST | `/mcp/preview`, `/mcp/add` | Quick migration preview / add |
+| GET | `/debug`, POST `/debug/collect` | Diagnostics |
+| GET | `/token` | Process-scoped random token (the panel sends it as `x-panel-token`) |
+
+> **Write authorization**: every POST must carry `x-panel-token` matching the process token, otherwise 401 — this blocks cross-origin / DNS-rebinding blind writes to the local control endpoints. GET read endpoints stay open.
 
 ## ⚙️ How it works
 
-```mermaid
-flowchart LR
-    subgraph Host["Host (Node, cordis plugin)"]
-        R[webServer routes<br/>/api/mcp-skill-panel/*]
-        C[catalog collector<br/>tools/change incremental + last-good persistence]
-        L[loader toggle<br/>resolve + update disabled]
-        F[assembly filter<br/>system-prompt/assemble]
-        T[mcp_search / mcp_call<br/>keep-alive enable + idle reaping]
-        R --> L
-        C --> R
-        F --> C
-        T --> C
-        T --> L
-    end
-    subgraph Browser["Browser (client bundle)"]
-        P[Two-tab panel<br/>toggles + visibility badges + autoManage switch]
-    end
-    R <--fetch--> P
+```
+┌ panel ──────────────────────────────────────────────────────┐
+│  collect.ts (view) · routes.ts (endpoints) · client/* (UI)   │
+└──────────────────────┬──────────────────────────────────────┘
+┌ policy (single source of truth) ────────────────────────────┐
+│  domain/policy.ts   intent (persisted) / effective (runtime) │
+│  domain/exposure.ts level rules · preset scope · v1→v2 (pure)│
+└──────────────────────┬──────────────────────────────────────┘
+┌ runtime ────────────────────────────────────────────────────┐
+│  domain/registry.ts  three sources → one ServerRef snapshot  │
+│  catalog.ts          tool catalog / search / last-good cache │
+│  mcpcall.ts          keep-alive + idle reaper + the two tools│
+└──────────────────────┬──────────────────────────────────────┘
+┌ assembly (single injection point) ──────────────────────────┐
+│  domain/assembly.ts  one system-prompt/assemble listener:    │
+│                      filter tools by level + name-only index │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**MCP toggling**: each MCP row is a loader entry in the agent preset composition (`agent.cordis.yml`, `@deepseek-ai/dsh-mcp-client`, full id like `include:agent-presets:mcp-cheatengine`). `loader.resolve(id).update({ disabled })` disposes/restarts the entry in real time.
+**One decision function** shared by the assembly filter, `mcp_search`, `mcp_call` and the panel badges — `decideExposure({ policy, running, aiActive, presetId })`:
 
-**Why persistence takes two steps**: the preset tree's `write()` is an explicit no-op, and `dsh-agent-presets` detects preset-file changes via a `{mtimeMs, size}` stamp — writing that file at runtime triggers a standing remount without disposing old instances (serverName conflicts, session creation failures — a 0.1.0 incident). So toggles only write the plugin state file, and the intent is materialized into the preset file during `apply` (early startup, before the standing mount).
+1. preset not allowed → `off` (runtime isolation; physical state untouched)
+2. `off` / `hidden` → as configured
+3. `native` / `name-only`: process running and not inside an AI keep-alive window → as configured; otherwise degrade to `hidden` (tools stay out of context, `mcp_call` still works — capability is never silently lost)
 
-**Middle-layer call chain** (`mcp_call` against a disabled server):
-
-```mermaid
-sequenceDiagram
-    participant M as Model
-    participant P as Plugin (mcp_call)
-    participant L as loader
-    participant S as MCP server
-
-    M->>P: mcp_call(server, tool, args)
-    P->>L: entry.update({disabled:false}) (record AI owner)
-    L->>S: spawn / reconnect
-    P->>P: wait for registration (poll tools.get + tools/change)
-    P->>S: tools.execute (in-plugin execution)
-    S-->>P: result
-    P-->>M: text result
-    Note over P: refcount -1; idle 30s then reap (AI-enabled only)
-```
-
-**Catalog collection**: `tools/change` (root listener, 150ms debounce) incrementally snapshots enabled servers; when `agents` is unavailable in the apply context it falls back to `agentPresets.standingKeyFor()` to resolve the scope (v0.4.1 fix); empty snapshots never overwrite the on-disk last-good; `catalog.json` is written atomically (tmp + rename, 0600).
-
-## ✅ Verification checklist
-
-| Check | Action | Expected |
-| --- | --- | --- |
-| Panel entry | Restart, open Settings | "MCP & Skill Manager" appears with two tabs; zh/en follows UI language |
-| Disable MCP | Turn a server off | Card shows "Disabled"; new turns no longer include `mcp__<server>__*`; the card still shows catalog tool count |
-| Enable MCP | Turn it back on | Tools restored, **no restart** |
-| Persistence | Disable, restart dsh | Server stays disabled |
-| Skill toggle | Flip a skill | Card flips instantly without bouncing; model catalog updated |
-| External change | Session A disables an MCP, session B opens the panel | Fresh state without manual refresh |
-| AI middle layer | Turn autoManage on in the panel | Disabled servers hidden from the model, `mcp_search`/`mcp_call` available; user-enabled servers show the "visible" badge |
-| Reaper safety | Let a model-called server idle 30s | AI-temporarily-enabled server auto-disables; user-enabled servers are never reclaimed |
+**Why persistence takes two steps**: `dsh-agent-presets` detects composition-file changes via an `{mtimeMs, size}` stamp and remounts the standing composition without disposing the old one → writing the composition at runtime causes global `serverName` collisions and failed session creation (a measured incident). Policies therefore only write the plugin's own `state.json`; materialization into compositions happens at early startup (before any standing mount is attached), with three rules: **first adoption** (adopt the file's state, never overwrite a hand-edited row), **respect external edits** (align the ledger only), **materialize** (write only when the desired state differs).
 
 ## ⚠️ Known limitations
 
-- Toggles act at the preset layer: one server/skill switch affects all sessions under that preset.
-- SKILL.md files without frontmatter cannot be toggled (the provider ignores them anyway).
-- Tool counts/tokens are estimates (`JSON.stringify(parameters).length / 4`), approximate to the real injection surface.
-- After disabling, tools disappear immediately, but the current turn's cached request (if any) may still reference old schemas; the next request refreshes naturally.
-- **Persistence lag**: toggles take effect live; surviving a restart depends on materialization at next startup — if the plugin is hot-updated while sessions are running, this process does not materialize; the next restart applies it.
-- **Manually editing MCP rows in the preset file** (e.g. removing `disabled: true` by hand) removes that row from the plugin's management (your edit is respected at next startup).
-- Writing SKILL.md at runtime is safe (the skill-filesystem watcher expects edits); writing the preset composition file at runtime triggers the stamp-remount incident, which the plugin deliberately never does.
-- The capability summary (`mcp_search` with no args) only covers servers that have a catalog snapshot or a configured `serverSummary`; servers that never started successfully (e.g. codegraph) are not listed.
-- **Control-endpoint auth**: writes are gated by a per-process random token (`x-panel-token`), auto-attached by the same-origin panel; GET reads stay open. The host webServer has no auth layer of its own — if you expose the listener on `0.0.0.0`, rely on external network isolation.
+- **A preset standing row's process can only be started/stopped by a restart**: since rc.1 those rows are not in the loader, so the plugin cannot toggle them at runtime (writing the composition at runtime triggers the remount incident). Runtime visibility/callability is enforced immediately by the assembly and middle layers; the process state follows the next materialization.
+- Changing level/scope/tool toggles mid-session invalidates that session's prompt cache (the panel warns); use "Next session" to avoid it.
+- The "Name only" level adds a small standing index (one line per server); hidden/off add nothing.
+- A preset id that no longer exists stays in your config (marked in the UI) instead of being silently removed.
+- Project-level MCPs are visible only to sessions of the **same workspace** (matched by session cwd; no `.git` upward search).
 
 ## 🛠️ Development
 
-Dependencies are now **self-contained** (`@deepseek-ai/*` build-time deps are all in devDependencies; a plain registry install works — **no local DSH closure needed**):
-
 ```sh
-npm install --legacy-peer-deps --ignore-scripts   # one-time (npm run setup / junctions no longer required)
-npm run typecheck  # tsc type check (Context service augmentation comes from @deepseek-ai devDeps)
-npm run build      # tsdown (node external all @deepseek-ai/*) -> tsc dts last (order matters)
-npm run verify     # artifact verification (no inlined TOOL_RUNTIME_SCHEDULER, client wrapper, lib/types)
-node scripts/selftest-mcp.mjs  # catalog unit tests
+pnpm install
+pnpm setup          # junction the DSH closure into node_modules (type resolution)
+pnpm typecheck
+pnpm build          # tsdown → lib/*.js + tsc dts → lib/types
+pnpm verify         # artifact checks (externals, entries, client wrapper)
+node scripts/selftest-exposure.mjs   # domain logic: levels / preset scope / migration / sync rules
+node scripts/selftest-policy.mjs     # policy store end-to-end: dir move / v1→v2 / apply timing (temp HOME)
+node scripts/selftest-mcp.mjs        # catalog search / composition text / project scan / JSON conversion
 ```
-
-> **lib/ artifacts are rebuilt by GitHub Actions** (`.github/workflows/build.yml`): push your source, CI runs typecheck → build → verify → selftest and, on `main`, commits the fresh `lib/` back with `[skip ci]` — remember to `git pull` to collect it.
-> Why `--legacy-peer-deps`: runtime peers come from the DSH closure, while rc.6~rc.8 registry peer graphs conflict (ERESOLVE); why `--ignore-scripts`: esbuild ships platform binaries via optionalDependencies, no postinstall needed.
-
-The node-half tsdown build must use `external: [/^@deepseek-ai\//]`: inlining dsh-tools creates a second `TOOL_RUNTIME_SCHEDULER` Symbol and breaks tool dispatch (same lesson as dsh-context-doctor).
 
 ## 📋 Changelog
 
-| Version | Content |
-| --- | --- |
-| 0.5.0 | Prompt Cache optimization (P0+P1, issue #1): mid-session toggle miss warning banner (red severe variant for large packs, 12s auto-dismiss); apply-timing immediate / next-session (the latter records intent into a pending queue, applied at `agent/session-start` or on restart materialization — zero miss for the current session); toggles coalesced into a single toggleBatch (single invalidateMcp); applyPendingMcp state-residue fallback (rows with desired ≠ live after restart/hot-reload are applied; externally modified rows are respected and cleared) + new selftest-pending chain test (in CI); toggleBatch partial failures no longer abort the batch; updated cover image |
-| 0.4.9 | Dependency alignment to the DSH rc.8 line (full pipeline verified on rc.8): 10 `@deepseek-ai/*` devDeps 0.1.0-rc.6 → 0.1.0-rc.8, peers tightened (cordis ^4.0.1 stable / schemastery ^3.18.1 / dsh-scope ^0.1.0-rc.8); published on npm (first release 0.4.8, `repository` points back here) + new Trusted Publishing pipeline (publish.yml, OIDC, tokenless) |
-| 0.4.8 | Self-contained build + CI: 14 `@deepseek-ai/*` added to devDependencies (pinned to the rc.6 line; plain registry install enables typecheck/build/selftest without the local DSH closure); new GitHub Actions pipeline (typecheck → build → verify → selftest; on main push it rebuilds and commits `lib/` back with `[skip ci]`) |
-| 0.4.7 | Security & robustness: the toggle endpoint now validates the target row is an MCP row (blocks disabling arbitrary loader rows); all write endpoints are gated by a per-process token (`x-panel-token`, blocks cross-origin/DNS-rebinding blind writes); 64KB request-body cap; `waitRegistered` bound to context disposal/AbortSignal (no hung mcp_call on unload); removed hardcoded DEFAULT_SUMMARY (capability summary lists real servers only); client unified on the new API prefix and auto-attaches the token; build order fixed so lib/types artifacts ship (types declaration no longer dangles); empty package-lock.json fixed |
-| 0.4.3 | Performance pass: restore race fixed (a user manually enabling a server mid-call is never disabled on failure); per-turn visibility Map cache in the assembly filter (O(1) lookups); 500ms schemas reuse window; 300ms catalog persist debounce; in-memory state.json with write merging; 80-char summary truncation; disabled-state token estimate cache; proactive TTL pruning of cache maps; snapshotServer dead code removed |
-| 0.4.2 | Assembly filter keyed by server state: MCP tools of user-enabled servers enter the model context (memory high-sensitivity recall); disabled ones are hidden and called on demand via mcp_search/mcp_call; AI-temporary enables never pollute context; manual enable clears AI marks (reaper safety); panel autoManage switch + model-visibility badges |
-| 0.4.1 | Catalog collection pipeline fixes: empty `agents` in apply ctx made auto collection always empty (fallback to `standingKeyFor` for scope), last-good guard failure, empty-snapshot disk overwrite at startup, persist race; debug diagnostic endpoints; case retests passed (chrome→mimo cross-server, calcmcp burst zero-respawn + 30s reaping) |
-| 0.4.0 | AI middle layer (`autoManage`): `mcp_search`/`mcp_call` on-demand MCP usage (keep-alive + idle reaping + assembly filter); private catalog persistence + disabled-state backfill |
-| 0.3.2 | API prefix aligned with package name (legacy prefix kept); local dir renamed |
-| 0.3.1 | Versioned MCP aggregate reuse; frontend fetch out-of-order guard |
-| 0.3.0 | Scoped endpoints + domain caches + event-driven invalidation (tab lazy loading) |
-| 0.2.1 | Skill toggle 30s UI lag root cause fixed (confirmed values override stale catalog) |
-| 0.2.0 | Renamed to "MCP & Skill Manager" + GitHub repo `dsh-mcp-skill-panel` |
-| 0.1.1 | MCP persistence rework (state file + early-startup materialization), fixing session creation failures caused by writing the preset file at runtime |
-| 0.1.0 | Initial: MCP/Skill listing + toggles |
+### v0.6.0 — four exposure levels + preset runtime isolation (breaking)
+
+- **Skill feature removed**; the plugin is now a single control plane for MCP visibility and usability
+- **Four levels** replace "enable/disable + global autoManage": native / name-only / hidden / off
+- **Preset scope** (runtime isolation): `all` / `only` / `except` + multi-select, enforced identically in assembly, `mcp_search` and `mcp_call`, with the process left running
+- **`mcp_call` accepts a server alone** and returns its tool list when the tool name is unknown
+- **`mcp_search` layering**: lists native + name-only servers, counts hidden ones, hides off/isolated ones entirely
+- **Architecture**: three separate `system-prompt/assemble` filters merged into one assembly layer; the live-row and preset-row build paths unified into a registry; intent/effective policy tables replace the desired/lastApplied/pending state tangle
+- **Renamed** to `dsh-mcp-panel` (entry "MCP Manager", HTTP prefix `/api/mcp-panel`, legacy prefixes kept)
+- **Automatic migration** of the data directory and of `state.json` v1 → v2, with a `state.v1.json` backup
 
 ## 📄 License
 
-[MIT](./LICENSE) © lilyblessing
+MIT
