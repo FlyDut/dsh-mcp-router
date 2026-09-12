@@ -1,76 +1,54 @@
 /**
- * 数据收集：MCP 清单（loader 行 × schema 聚合）与 Skill 清单（目录快照）。
+ * 面板数据收集：MCP 清单（注册表行 × 策略 × schema 聚合）。
  *
- * 从 index.ts 拆出（可维护性批次 P1-1）：collectMcp / collectSkills / 聚合缓存 /
- * 分域缓存句柄。依赖方向：本模块只被 routes.ts / index.ts 消费。
+ * 行的来源统一由 `domain/registry.ts` 给出（loader 行 / preset standing 行 / 项目行），
+ * 可见性与可用性统一由 `domain/assembly.ts` + `domain/policy.ts` 判定，因此本模块
+ * 不再区分「live 行」与「preset 行」两套构建路径。
+ * 依赖方向：本模块只被 routes.ts / index.ts 消费。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
-import type { McpRow, McpView, SkillsView } from './shared-types'
-import { isMcpEntry, serverNameOf, mcpEntryConfig } from './mcp-entry'
-import { projectServerOwner, getActiveWorkspace } from './project-mcp'
-import { disabledToolsOf } from './tool-disable'
+import type { McpRow, McpView } from './shared-types'
 import type { CatalogServer } from './catalog'
 import { serverOfMcp } from './catalog'
 import type { McpCallController } from './mcpcall'
-import type { CatalogRuntime } from './index'
+import type { CatalogRuntime } from './runtime-types'
+import type { PolicyStore } from './domain/policy'
+import type { Registry } from './domain/registry'
+import { agentPresetId, agentWorkspace, lastSessionScope } from './domain/session-scope'
+import { injectionOf } from './domain/exposure'
 import { messageOf } from './util'
-import { readState } from './state'
-import { pendingMcp } from './pending'
-import { listPresetMcpRows } from './preset-mcp'
+import { getActiveWorkspace } from './project-mcp'
 
 /** 分域缓存 TTL：事件驱动失效为主，TTL 只是兜底（事件丢失场景） */
 export const DOMAIN_TTL_MS = 60_000
-/** 已确认的 skill 状态在 collectState 中覆盖 snapshot 旧值的有效期 */
-export const CONFIRMED_SKILL_TTL_MS = 60_000
-/** skill toggle 确认轮询间隔（ctx.timeout，随 ctx 生命周期）。 */
-export const SKILL_TOGGLE_POLL_MS = 80
-
-/**
- * 最近一次 toggle 确认过的 skill 状态（name → modelInvocable）。
- * 服务端轮询用 skills.get 实时读文件确认，早于 snapshot 的发现缓存失效，
- * 用它覆盖 collectState 里的陈旧 candidate 值。
- */
-export const confirmedSkills = new Map<string, { modelInvocable: boolean; at: number }>()
-
-/** Skill 行视图（host 内部使用；对外形状见 shared-types 的 SkillRow）。 */
-export interface SkillView {
-  name: string
-  description: string
-  source: string
-  modelInvocable: boolean
-  userInvocable: boolean
-  path?: string
-}
 
 export interface Deps {
   ctx: Context
   caches: DomainCaches
   catalogRuntime: CatalogRuntime
-  /** 中间层控制层（mcp_call 的 AI 启用标记查询/清除）。 */
+  registry: Registry
+  policy: PolicyStore
+  /** 中间层控制层（访问判定 + AI 启用标记查询/清除）。 */
   controller?: McpCallController
 }
 
 /** 分域缓存句柄：apply 创建，makeRoutes 消费，事件失效由 apply 订阅。 */
 export interface DomainCaches {
   mcpCache: Map<string, { at: number; promise: Promise<McpView> }>
-  skillsCache: Map<string, { at: number; promise: Promise<SkillsView> }>
   /** MCP 工具聚合缓存（per scope），tools/change 时随 mcpCache 一起清 */
   mcpAggregates: Map<object | null, { at: number; value: McpAggregate }>
   /** schemas 原始缓存（per scope），路径 A/B 共享同一份深克隆结果 */
   schemasCache: Map<object | null, { at: number; schemas: Array<{ name?: unknown; description?: unknown; parameters?: unknown }> }>
   invalidateMcp: () => void
-  invalidateSkills: () => void
 }
 
 export function createDomainCaches(): DomainCaches {
   const mcpCache = new Map<string, { at: number; promise: Promise<McpView> }>()
-  const skillsCache = new Map<string, { at: number; promise: Promise<SkillsView> }>()
   const mcpAggregates = new Map<object | null, { at: number; value: McpAggregate }>()
   const schemasCache = new Map<object | null, { at: number; schemas: Array<{ name?: unknown; description?: unknown; parameters?: unknown }> }>()
   return {
     mcpCache,
-    skillsCache,
     mcpAggregates,
     schemasCache,
     invalidateMcp: () => {
@@ -78,7 +56,6 @@ export function createDomainCaches(): DomainCaches {
       mcpAggregates.clear()
       schemasCache.clear()
     },
-    invalidateSkills: () => skillsCache.clear(),
   }
 }
 
@@ -90,7 +67,7 @@ function tokenEstimate(parameters: unknown): number {
   }
 }
 
-/** 写时清理过期条目（P2-8）：分域缓存 / 聚合 / 已确认 skill 的 Map 长期运行不膨胀。 */
+/** 写时清理过期条目（P2-8）：分域缓存的 Map 长期运行不膨胀。 */
 export function pruneExpired<T>(map: Map<T, { at: number }>, now: number): void {
   for (const [key, entry] of map) {
     if (now - entry.at >= DOMAIN_TTL_MS) map.delete(key)
@@ -110,7 +87,6 @@ export function getSchemasView(
 ): Array<{ name?: unknown; description?: unknown; parameters?: unknown }> {
   const key = scopeKey ?? null
   const now = Date.now()
-  // 轻量清理：删除超过 max(ttlMs, DOMAIN_TTL_MS) 的旧条目（防驻留）
   const maxTtl = Math.max(ttlMs, DOMAIN_TTL_MS)
   for (const [k, entry] of caches.schemasCache) {
     if (now - entry.at >= maxTtl) caches.schemasCache.delete(k)
@@ -126,7 +102,6 @@ export function getSchemasView(
 
 export function resolveAgent(ctx: Context, sessionId: string | undefined) {
   if (sessionId) {
-    // SessionId 是品牌类型；HTTP query 字符串需显式转换
     const byId = ctx.agents.get(sessionId as Parameters<typeof ctx.agents.get>[0])
     if (byId) return byId
   }
@@ -140,13 +115,10 @@ export function resolveAgent(ctx: Context, sessionId: string | undefined) {
  *
  * 关键坑（2026-08-27 实测）：HTTP 请求路径（routes 的 httpCtx）下既解析不到
  * agent（roots/list 空或非目标）也拿不到 agentPresets.standingKeyFor()（该服务
- * 视图受限）→ scope key 恒 undefined → schemas 落入空视图，面板聚合全 0
- * （filesystem 等「无工具」）。而 apply 早期 ctx 下 standingKeyFor() 可解析
- * （快照路径一直正常，lastMcpTools=17）。
+ * 视图受限）→ scope key 恒 undefined → schemas 落入空视图，面板聚合全 0。
  * 解法：scope key 在 apply 早期解析一次并缓存（进程级单例），所有路径复用。
  */
 let sharedScopeKey: object | undefined
-/** scope key 解析来源（NIT-1：scopeDiag 现场取证用）：'agent' | 'standing' | null。 */
 let sharedScopeKeySource: 'agent' | 'standing' | null = null
 
 export async function resolveCollectScopeKey(ctx: Context, sessionId: string | undefined): Promise<object | undefined> {
@@ -183,10 +155,8 @@ export function scopeKeySource(): 'agent' | 'standing' | null {
 }
 
 /** 行状态徽标判定（纯函数，selftest 表驱动回归）。
- * 语义（2026-08-27 发布前独立审查修正）：active/idle 以 **liveTools**（真实注册）
- * 为准——displayTools 含 catalog 快照兜底，用它判定 active 会掩盖「scope 解析
- * 失败但 catalog 有旧快照」的故障现场（面板显示健康而实际工具未注册）。
- * displayTools 仅用于 tools/tokens 数值展示与停用态回填。
+ * 语义：active/idle 以 **liveTools**（真实注册）为准——displayTools 含 catalog 快照
+ * 兜底，用它判定 active 会掩盖「scope 解析失败但 catalog 有旧快照」的故障现场。
  */
 export function computeStatus(disabled: boolean, running: boolean, liveTools: number): McpRow['status'] {
   if (disabled) return 'disabled'
@@ -208,7 +178,7 @@ function baseView(
   return { sessionId: agent ? agent.id : null, preset, cwd: cwd ?? null }
 }
 
-/** MCP 工具聚合结果：per-server 工具数 + token 估算。tools/change 间隙复用，跳过 schemas 深克隆。 */
+/** MCP 工具聚合结果：per-server 工具数 + token 估算。 */
 export interface McpAggregate {
   byServer: Map<string, { tools: number; tokens: number }>
   mcpToolsTotal: number
@@ -218,12 +188,9 @@ export interface McpAggregate {
 /**
  * 按 name 去重合并两个 schemas 视图（scoped 优先）。
  *
- * ⚠️ 2026-08-27 实测结论：`tools.schemas()`（无参全局视图）**不含任何 mcp__ 工具**
- * （全部 mcp 工具注册在 scope 层）→ 本合并当前环境恒为 no-op，属**防御性合并**：
- * 若未来出现联邦/全局作用域注册的 mcp 工具，此路径才生效。filesystem 等 patch 层
- * server 此前「无工具」的真正根因是 HTTP 路径 scope key 解析失败（3872206 共享缓存
- * 修复），与全局视图无关——维护时勿按旧注释误判为「全局 realm 有工具」。
- * 同名条目 scoped 优先（占位条目会压过全局完整 schema，当前两视图同源不触发）。
+ * ⚠️ 2026-08-27 实测：`tools.schemas()`（无参全局视图）不含任何 mcp__ 工具（全部
+ * 注册在 scope 层）→ 本合并当前恒为 no-op，属防御性合并：若未来出现全局作用域注册
+ * 的 mcp 工具，此路径才生效。
  */
 export function mergeSchemas(
   scoped: Array<{ name?: unknown; description?: unknown; parameters?: unknown }>,
@@ -260,11 +227,7 @@ function computeAggregate(schemas: Array<{ name?: string; parameters?: unknown }
   return { byServer, mcpToolsTotal, mcpTokensTotal }
 }
 
-/**
- * 按 scope 复用的 MCP 聚合缓存（C 项优化）：tools.schemas 深克隆 300+ 工具是
- * collectMcp 最重的一步；聚合结果在 tools/change 事件间隙直接复用，
- * TTL 只是事件丢失时的兜底。key = scopeKey（null 表示全局视图）。
- */
+/** 按 scope 复用的 MCP 聚合缓存：tools.schemas 深克隆是 collectMcp 最重的一步。 */
 function getMcpAggregate(
   ctx: Context,
   caches: DomainCaches,
@@ -278,7 +241,6 @@ function getMcpAggregate(
   let schemas: Array<{ name?: unknown; description?: unknown; parameters?: unknown }> = []
   try {
     schemas = getSchemasView(ctx, caches, scopeKey, DOMAIN_TTL_MS)
-    // 合并全局视图（profile patch 层 server 注册在全局 realm，不在 agent scope）
     if (scopeKey) schemas = mergeSchemas(schemas, getSchemasView(ctx, caches, undefined, DOMAIN_TTL_MS))
   } catch (error) {
     errors.push(`tools.schemas: ${messageOf(error)}`)
@@ -288,8 +250,7 @@ function getMcpAggregate(
   return value
 }
 
-/** 停用态 token 估算缓存（P2-6）：fetchedAt 不变则复用，避免每次面板请求
- * 对停用 server（如 cheatengine 173 工具）全量 JSON.stringify。 */
+/** 停用态 token 估算缓存（P2-6）：fetchedAt 不变则复用。 */
 function catalogTokens(runtime: CatalogRuntime, serverName: string, info: CatalogServer | undefined): number {
   if (!info) return 0
   const hit = runtime.tokenCache.get(serverName)
@@ -300,16 +261,18 @@ function catalogTokens(runtime: CatalogRuntime, serverName: string, info: Catalo
 }
 
 async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<McpView> {
-  const { ctx } = deps
+  const { ctx, registry, policy } = deps
   const errors: string[] = []
   const agent = resolveAgent(ctx, sessionId)
+  // agent 解析不到时（HTTP 视图受限）退回最近会话作用域：宁可显示「最近一次」的真实
+  // 判定结果，也不要按「无 preset」误判成被隔离。
+  const remembered = lastSessionScope()
+  const presetId = agentPresetId(ctx, agent) ?? remembered.presetId
+  const workspace = agentWorkspace(agent) ?? remembered.workspace
   const scopeKey = await resolveCollectScopeKey(ctx, sessionId)
-  const cwd = agent?.session?.header?.cwd ?? undefined
 
-  // MCP：loader 行 × schema 聚合（聚合结果版本化复用）
   const { byServer, mcpToolsTotal, mcpTokensTotal } = getMcpAggregate(ctx, deps.caches, scopeKey, errors)
-  // 共享 schemas 缓存（路径 A/B 同源）：构建 per-server 工具列表（面板工具级禁用用）。
-  // 同样合并全局视图：patch 层 server（filesystem 等）的工具列表需要出现在面板。
+  // 共享 schemas 缓存（路径 A/B 同源）：构建 per-server 工具列表（面板工具级禁用用）
   let schemas = getSchemasView(ctx, deps.caches, scopeKey, DOMAIN_TTL_MS)
   if (scopeKey) schemas = mergeSchemas(schemas, getSchemasView(ctx, deps.caches, undefined, DOMAIN_TTL_MS))
   const toolsByServer = new Map<string, Array<{ name: string; description: string }>>()
@@ -328,175 +291,71 @@ async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<Mc
   for (const list of toolsByServer.values()) list.sort((a, b) => a.name.localeCompare(b.name))
 
   const mcp: McpRow[] = []
-  // P1 会话边界：读一次 state.json 的 desired 意图（延迟生效模式下与 live disabled 不同，
-  // 驱动 UI「待生效」徽标）。readState 有内存缓存，成本忽略。
-  const state = await readState().catch(() => undefined)
   try {
-    for (const entry of ctx.loader.entries()) {
-      if (!isMcpEntry(entry)) continue
-      const serverName = serverNameOf(entry)
-      // 项目级 MCP：面板始终展示（可开关、标注工作区）；模型可见性由
-      // project-mcp 的 system-prompt/assemble 过滤按会话工作空间严格把控。
-      const projectWorkspace = projectServerOwner(serverName)
+    for (const ref of registry.snapshot().all.values()) {
+      const serverName = ref.serverName
+      const effectivePolicy = policy.effective(serverName, ref.workspace)
+      const intent = policy.intent(serverName, ref.workspace)
+      const access = deps.controller?.accessFor(serverName, presetId, workspace)
+      const effective = access?.effective ?? 'off'
       const agg = byServer.get(serverName)
       const liveTools = agg?.tools ?? 0
-      const running = entry.fiber !== undefined
-      const disabled = entry.disabled
-      // P1 会话边界：该行在预设文件下的 desired 意图与待生效判定（desired !== live disabled）。
-      const tree = entry.parent?.tree as { filename?: string } | undefined
-      const rowFile = tree?.filename
-      const rowDesired =
-        typeof rowFile === 'string' && rowFile.length > 0 ? state?.mcp?.[rowFile]?.[entry.options.id]?.desired : undefined
-      // 面板联动（P3）：停用/未挂载时优先显示 catalog 目录值（工具数与 token 估算），
-      // 让用户看到「该 MCP 有哪些工具可用」而不只是 0
       const catalogInfo = deps.catalogRuntime.catalog[serverName]
-      const displayTools = liveTools > 0 ? liveTools : catalogInfo?.tools.length ?? 0
-      const displayTokens =
-        liveTools > 0 ? (agg?.tokens ?? 0) : catalogTokens(deps.catalogRuntime, serverName, catalogInfo)
-      const status = computeStatus(disabled, running, liveTools)
-      const transportRaw = mcpEntryConfig(entry)?.transport
-      // 项目行查所属工作区的项目禁用表；全局行查全局表（disabledToolsOf 内部按 owner 分派）
-      const toolDisabled = disabledToolsOf(serverName, projectWorkspace)
+      const displayTools = liveTools > 0 ? liveTools : (catalogInfo?.tools.length ?? 0)
+      const displayTokens = liveTools > 0 ? (agg?.tokens ?? 0) : catalogTokens(deps.catalogRuntime, serverName, catalogInfo)
+      // disabled → 'disabled'；启用但 fiber 缺失 → 'failed'；启用有 fiber → active/idle
+      const status = computeStatus(ref.disabled, ref.disabled || ref.running, liveTools)
       let toolList = toolsByServer.get(serverName)
       if (!toolList && catalogInfo) {
-        // 兜底：schemas 视图缺失该 server（scope 解析异常等）时用 catalog 快照
-        // 构建工具列表（CatalogEntry.name 是全名 mcp__<server>__<tool>，
-        // 与聚合产物和禁用表完全同构）。保证工具级禁用 UI 始终可用。
+        // 兜底：schemas 视图缺失该 server（scope 解析异常等）时用 catalog 快照构建列表
         toolList = catalogInfo.tools.map((tool) => ({ name: String(tool.name ?? ''), description: String(tool.description ?? '') }))
       }
       mcp.push({
-        entryId: entry.id,
-        rowId: entry.options.id,
+        entryId: ref.entryId,
+        rowId: ref.rowId,
         serverName,
-        transport: transportRaw ? String(transportRaw) : null,
-        disabled,
-        running,
+        transport: ref.transport,
+        disabled: ref.disabled,
+        running: ref.running,
         tools: displayTools,
         tokens: displayTokens,
-        toolList: toolList?.map((tool) => ({ name: tool.name, description: tool.description, disabled: toolDisabled.has(tool.name) })) ?? null,
+        toolList:
+          toolList?.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            disabled: effectivePolicy.disabledTools.includes(tool.name),
+          })) ?? null,
         status,
-        modelVisible:
-          !disabled &&
-          !(deps.catalogRuntime.autoManage && (deps.controller?.isAiEnabled(serverName) ?? false)),
-        desired: rowDesired,
-        pending: rowDesired !== undefined ? rowDesired !== disabled : false,
-        workspace: projectWorkspace,
-        source: 'live',
+        exposure: intent?.exposure ?? effectivePolicy.exposure,
+        effectiveExposure: effective,
+        presetScope: effectivePolicy.presets,
+        presetAllowed: access ? access.blockedBy !== 'preset' : true,
+        modelVisible: injectionOf(effective) === 'tools',
+        nameOnly: injectionOf(effective) === 'name',
+        pending: policy.isPending(serverName, ref.workspace),
+        configured: intent !== undefined,
+        source: ref.source,
+        workspace: ref.workspace,
       })
     }
   } catch (error) {
-    errors.push(`loader.entries: ${messageOf(error)}`)
+    errors.push(`registry.entries: ${messageOf(error)}`)
   }
   mcp.sort((a, b) => a.serverName.localeCompare(b.serverName))
 
-  // rc.1 standing 组合兜底（空面板修复A，2026-09-08）：preset 行挂 standing 组合，
-  // 不在 ctx.loader.entries() 里时 mcp[] 为空。此时以当前会话 preset 的 standing
-  // 快照行补行：开关走 state.json desired 意图（pending 徽标），pending.ts:state.json
-  // 残留补齐负责下次启动/会话边界物化（syncPresetFiles 写 preset 文件）。
-  // 仅当「loader 零行」时补行——loader 有行（旧版/未来版）时保持原行为不动。
-  if (mcp.length === 0) {
-    try {
-      // 当前会话 preset：缺 sessionId 时 roots[0]/list[0]（与 resolveAgent 同规则）
-      const presetId = agent ? (ctx.agentPresets.composedPreset(agent.ctx) ?? null) : null
-      if (presetId) {
-        const { rows: presetRows } = await listPresetMcpRows(ctx, presetId)
-        for (const pr of presetRows) {
-          const projectWorkspace = projectServerOwner(pr.serverName)
-          const agg = byServer.get(pr.serverName)
-          const liveTools = agg?.tools ?? 0
-          const rowDesired = state?.mcp?.[pr.file]?.[pr.rowId]?.desired
-          const pendingHit = pendingMcp.get(pr.entryId)
-          // 从未操作过的预设行：无 pending、无 desired → pending=false（首屏不挂徽标）；
-          // toggle 后（pendingHit 或 desired≠live）才挂 pending。
-          const pendingFlag = pendingHit ? pendingHit.disabled !== pr.disabled : rowDesired !== undefined ? rowDesired !== pr.disabled : false
-          const catalogInfo = deps.catalogRuntime.catalog[pr.serverName]
-          const displayTools = liveTools > 0 ? liveTools : catalogInfo?.tools.length ?? 0
-          const displayTokens =
-            liveTools > 0 ? (agg?.tokens ?? 0) : catalogTokens(deps.catalogRuntime, pr.serverName, catalogInfo)
-          const status = computeStatus(pr.disabled, pr.running, liveTools)
-          const toolDisabled = disabledToolsOf(pr.serverName, projectWorkspace)
-          let toolList = toolsByServer.get(pr.serverName)
-          if (!toolList && catalogInfo) {
-            toolList = catalogInfo.tools.map((tool) => ({ name: String(tool.name ?? ''), description: String(tool.description ?? '') }))
-          }
-          mcp.push({
-            entryId: pr.entryId,
-            rowId: pr.rowId,
-            serverName: pr.serverName,
-            transport: pr.transport,
-            disabled: pr.disabled,
-            running: pr.running,
-            tools: displayTools,
-            tokens: displayTokens,
-            toolList: toolList?.map((tool) => ({ name: tool.name, description: tool.description, disabled: toolDisabled.has(tool.name) })) ?? null,
-            status,
-            modelVisible:
-              !pr.disabled &&
-              !(deps.catalogRuntime.autoManage && (deps.controller?.isAiEnabled(pr.serverName) ?? false)),
-            desired: rowDesired,
-            pending: pendingFlag,
-            workspace: projectWorkspace,
-            source: 'preset',
-          })
-        }
-        mcp.sort((a, b) => a.serverName.localeCompare(b.serverName))
-      }
-    } catch (error) {
-      errors.push(`preset-mcp: ${messageOf(error)}`)
-    }
-  }
-
   return {
-    ...baseView(ctx, agent, cwd),
+    ...baseView(ctx, agent, workspace),
     mcp,
     mcpTotal: mcp.length,
-    mcpDisabled: mcp.filter((row) => row.disabled).length,
+    mcpDisabled: mcp.filter((row) => row.exposure === 'off').length,
+    mcpNative: mcp.filter((row) => row.effectiveExposure === 'native').length,
+    mcpNameOnly: mcp.filter((row) => row.effectiveExposure === 'name-only').length,
+    mcpHidden: mcp.filter((row) => row.effectiveExposure === 'hidden').length,
     mcpToolsTotal,
     mcpTokensTotal,
-    autoManage: deps.catalogRuntime.autoManage,
     activeWorkspace: getActiveWorkspace(),
     errors,
   }
 }
 
-async function collectSkills(deps: Deps, sessionId: string | undefined): Promise<SkillsView> {
-  const { ctx } = deps
-  const errors: string[] = []
-  const agent = resolveAgent(ctx, sessionId)
-  const cwd = agent?.session?.header?.cwd ?? undefined
-
-  // Skills
-  const skills: SkillView[] = []
-  let skillsModelVisible = 0
-  try {
-    const snapshot = await ctx.skills.snapshot({ scope: agent, cwd })
-    for (const summary of snapshot.skills) {
-      // toggle 确认值覆盖：snapshot 的 candidate 缓存可能落后于 watcher 失效
-      // （skills.get 实时读文件已确认新值，snapshot 的发现缓存要等 watcher 200ms 生效）。
-      // 60s 内确认过的 skill 以确认值为准，避免 UI 翻回 + state 缓存钉住旧值。
-      const confirmed = confirmedSkills.get(summary.name)
-      const modelInvocable =
-        confirmed && Date.now() - confirmed.at < CONFIRMED_SKILL_TTL_MS ? confirmed.modelInvocable : summary.invocation?.modelInvocable !== false
-      if (modelInvocable) skillsModelVisible += 1
-      skills.push({
-        name: summary.name,
-        description: summary.description ?? '',
-        source: summary.source ?? 'unknown',
-        modelInvocable,
-        userInvocable: summary.invocation?.userInvocable !== false,
-      })
-    }
-  } catch (error) {
-    errors.push(`skills.snapshot: ${messageOf(error)}`)
-  }
-
-  return {
-    ...baseView(ctx, agent, cwd),
-    skills,
-    skillsTotal: skills.length,
-    skillsModelVisible,
-    errors,
-  }
-}
-
-export { collectMcp, collectSkills }
+export { collectMcp }

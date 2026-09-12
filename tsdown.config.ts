@@ -60,6 +60,22 @@ export default defineConfig([
     },
   },
   {
+    // 领域纯逻辑：曝光档位判定 / 预设关联隔离 / v1→v2 策略迁移。
+    // 独立产物供 scripts/selftest-exposure.mjs 覆盖（无框架依赖，可直接断言真值表）。
+    entry: ['src/domain/exposure.ts'],
+    format: ['esm'],
+    outDir: 'lib',
+    target: 'node22',
+    platform: 'node',
+    external: [/^@deepseek-ai\//, /^node:/],
+    dts: false,
+    clean: false,
+    sourcemap: false,
+    outputOptions: {
+      entryFileNames: 'exposure.js',
+    },
+  },
+  {
     entry: ['src/client/index.ts'],
     // cjs：ModuleLoader factory 提供 require/module/exports，import 必须转成 require 调用
     format: ['cjs'],
@@ -72,7 +88,7 @@ export default defineConfig([
     outputOptions: {
       entryFileNames: 'client.js',
       banner: `window.__ModuleLoader__.load({
-\tid: "dsh-mcp-skill-panel",
+\tid: "dsh-mcp-panel",
 \tfactory: (require) => {
 \t\tvar module = { exports: {} };
 \t\tvar exports = module.exports;

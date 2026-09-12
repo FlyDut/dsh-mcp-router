@@ -18,7 +18,6 @@
       "@deepseek-ai/schemastery": ["node_modules/@deepseek-ai/schemastery/lib/index.d.ts"],
       "@deepseek-ai/dsh-scope": ["node_modules/@deepseek-ai/dsh-scope/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-tools": ["node_modules/@deepseek-ai/dsh-tools/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-skill": ["node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-agent": ["node_modules/@deepseek-ai/dsh-agent/lib/types/index.d.ts"],
       "@deepseek-ai/cordis-plugin-loader": ["node_modules/@deepseek-ai/cordis-plugin-loader/lib/types/index.d.ts"]
     }

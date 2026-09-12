@@ -31,6 +31,8 @@ import { serverOfMcp } from './catalog'
 import { isMcpEntry, serverNameOf } from './mcp-entry'
 import { readState } from './state'
 import { messageOf } from './util'
+import type { PolicyStore } from './domain/policy'
+import { desiredRunning } from './domain/exposure'
 
 /** 工作空间根下项目 MCP 的固定目录。 */
 const MCPS_DIR = '.dsh/mcps'
@@ -179,19 +181,17 @@ function buildRows(root: string, servers: McpServers): McpRowConfig[] {
 }
 
 /** 按行集合同步该工作空间已挂载的条目：删多出的、更新变化的、新建缺的。
- * 应用 state.json 的 projectMcp 禁用意图（面板开关 → 重启/热更新后保持）。 */
-async function syncRows(ctx: Context, state: WorkspaceState, rows: McpRowConfig[]): Promise<void> {
+ * 期望进程状态由策略层派生（exposure → desiredRunning），与面板档位一致。 */
+async function syncRows(ctx: Context, state: WorkspaceState, rows: McpRowConfig[], policy: PolicyStore): Promise<void> {
   const wanted = new Map(rows.map((row) => [String(row.config.serverName), row]))
-  // state 内存缓存：每次 sync 读一次，成本可忽略（面板 toggle 也走同一缓存）
-  const stateFile = await readState().catch(() => undefined)
-  const intentOf = (serverName: string): boolean => Boolean(stateFile?.projectMcp?.[state.root]?.[serverName])
+  const intentOf = (serverName: string): boolean => !desiredRunning(policy.effective(serverName, state.root).exposure)
   // 删除已不再需要的行
   for (const [serverName, entryId] of [...state.entries]) {
     if (wanted.has(serverName)) continue
     try {
       await ctx.loader.remove(entryId)
     } catch (error) {
-      ctx.logger.warn?.(`mcp-skill-panel: 卸载项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
+      ctx.logger.warn?.(`mcp-panel: 卸载项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
     }
     state.entries.delete(serverName)
     projectOwners.delete(serverName)
@@ -206,7 +206,7 @@ async function syncRows(ctx: Context, state: WorkspaceState, rows: McpRowConfig[
           await ctx.loader.update(existingId, { ...row, disabled: wantDisabled })
         }
       } catch (error) {
-        ctx.logger.warn?.(`mcp-skill-panel: 更新项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
+        ctx.logger.warn?.(`mcp-panel: 更新项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
       }
       continue
     }
@@ -218,7 +218,7 @@ async function syncRows(ctx: Context, state: WorkspaceState, rows: McpRowConfig[
       state.entries.set(serverName, row.id)
       projectOwners.set(serverName, state.root)
     } catch (error) {
-      ctx.logger.warn?.(`mcp-skill-panel: 挂载项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
+      ctx.logger.warn?.(`mcp-panel: 挂载项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
     }
   }
 }
@@ -243,21 +243,21 @@ async function disposeWorkspace(ctx: Context, root: string): Promise<void> {
 
 /** 会话进入工作空间时：无 .dsh/mcps → 卸载；有 → 扫描并按需挂载。
  * 记录「最近进入的工作空间」（活动工作区，随会话切换更新）。 */
-async function ensureWorkspace(ctx: Context, root: string): Promise<void> {
+async function ensureWorkspace(ctx: Context, root: string, policy: PolicyStore): Promise<void> {
   // 会话切换即刷新活动工作区（即使该目录没有项目 MCP，也是当前所处工作区）
   activeWorkspace = root
   if (!(await isDirectory(join(root, MCPS_DIR)))) {
     await disposeWorkspace(ctx, root)
     return
   }
-  const servers = await scanWorkspaceMcp(root, (msg) => ctx.logger.warn?.(`mcp-skill-panel: ${msg}`))
+  const servers = await scanWorkspaceMcp(root, (msg) => ctx.logger.warn?.(`mcp-panel: ${msg}`))
   const rows = buildRows(root, servers)
   let state = workspaces.get(root)
   if (!state) {
     state = { root, entries: new Map(), watcher: undefined, refreshTimer: undefined, refreshing: false }
     workspaces.set(root, state)
   }
-  await syncRows(ctx, state, rows)
+  await syncRows(ctx, state, rows, policy)
   if (!state.watcher) {
     try {
       // 去抖合并连续 change（编辑器保存一个文件常触发 2-3 次事件），
@@ -266,19 +266,19 @@ async function ensureWorkspace(ctx: Context, root: string): Promise<void> {
         if (state.refreshTimer) clearTimeout(state.refreshTimer)
         state.refreshTimer = setTimeout(() => {
           state.refreshTimer = undefined
-          void refresh(ctx, root, state!).catch((error) => {
-            ctx.logger.warn?.(`mcp-skill-panel: 项目 MCP 热更新失败（${root}）: ${messageOf(error)}`)
+          void refresh(ctx, root, state!, policy).catch((error) => {
+            ctx.logger.warn?.(`mcp-panel: 项目 MCP 热更新失败（${root}）: ${messageOf(error)}`)
           })
         }, RESCAN_DEBOUNCE_MS)
       })
     } catch (error) {
-      ctx.logger.warn?.(`mcp-skill-panel: 无法监视 ${join(root, MCPS_DIR)}: ${messageOf(error)}`)
+      ctx.logger.warn?.(`mcp-panel: 无法监视 ${join(root, MCPS_DIR)}: ${messageOf(error)}`)
     }
   }
 }
 
 /** watcher 触发的重扫：配置/目录变化后按新集合同步（热更新）。 */
-async function refresh(ctx: Context, root: string, state: WorkspaceState): Promise<void> {
+async function refresh(ctx: Context, root: string, state: WorkspaceState, policy: PolicyStore): Promise<void> {
   if (state.refreshing) return
   state.refreshing = true
   try {
@@ -286,78 +286,36 @@ async function refresh(ctx: Context, root: string, state: WorkspaceState): Promi
       await disposeWorkspace(ctx, root)
       return
     }
-    const servers = await scanWorkspaceMcp(root, (msg) => ctx.logger.warn?.(`mcp-skill-panel: ${msg}`))
-    await syncRows(ctx, state, buildRows(root, servers))
+    const servers = await scanWorkspaceMcp(root, (msg) => ctx.logger.warn?.(`mcp-panel: ${msg}`))
+    await syncRows(ctx, state, buildRows(root, servers), policy)
   } finally {
     state.refreshing = false
   }
 }
 
-/* ── 可见性过滤（常开，独立于 autoManage） ────────────────────────────── */
-
-/**
- * 常开过滤：项目 MCP 工具仅在本工作空间会话的装配结果中可见。
- * 非项目 MCP 工具不在此处理（交给 autoManage 的过滤器）。
- */
-function installProjectMcpVisibility(ctx: Context): () => void {
-  return ctx.effect(() => {
-    const off = ctx.root.on(
-      'system-prompt/assemble',
-      (
-        assembly: PromptAssembly,
-        context: unknown,
-        next: () => Promise<PromptAssembly>,
-      ): Promise<PromptAssembly> => {
-        if (assembly && Array.isArray(assembly.tools)) {
-          // 快速通道：无任何项目 MCP 行时零开销放行（默认场景）
-          if (projectOwners.size === 0) return next()
-          const cwd = (context as { agent?: { session?: { header?: { cwd?: unknown } } } } | undefined)?.agent?.session?.header?.cwd
-          const workspace = typeof cwd === 'string' ? cwd : null
-          assembly.tools = assembly.tools.filter((tool) => {
-            const name = String(tool?.name ?? '')
-            if (!name.startsWith('mcp__')) return true
-            const server = serverOfMcp(name)
-            // 畸形工具名保守保留，不误伤
-            if (server === null) return true
-            const owner = projectOwners.get(server)
-            // 非项目 MCP：交给 autoManage 过滤器
-            if (owner === undefined) return true
-            // 项目 MCP：仅本项目（活动工作空间）会话可见；无会话上下文时隐藏
-            // Windows 路径大小写不敏感（c:\ 与 C:\ 视为同一工作区）
-            return workspace !== null && strEquals(workspace, owner, 'ignorecase')
-          })
-        }
-        return next()
-      },
-    )
-    return off
-  }, 'mcp-skill-panel: project mcp visibility')
-}
-
-/** 安装项目 MCP 运行时：会话挂载 + 常开过滤。返回整体释放函数。 */
-export function installProjectMcp(ctx: Context): () => void {
+/** 安装项目 MCP 运行时：会话挂载 + 热更新。可见性由装配层按档位/工作区统一判定。返回释放函数。 */
+export function installProjectMcp(ctx: Context, policy: PolicyStore): () => void {
   const disposers: Array<() => void> = []
   disposers.push(
     ctx.effect(() => {
       const off = ctx.root.on('agent/session-start', (payload: { agent?: { session?: { header?: { cwd?: unknown } } } }) => {
         const cwd = payload?.agent?.session?.header?.cwd
         if (typeof cwd !== 'string' || cwd.length === 0) return
-        void ensureWorkspace(ctx, cwd).catch((error) => {
-          ctx.logger.warn?.(`mcp-skill-panel: 项目 MCP 挂载失败（${cwd}）: ${messageOf(error)}`)
+        void ensureWorkspace(ctx, cwd, policy).catch((error) => {
+          ctx.logger.warn?.(`mcp-panel: 项目 MCP 挂载失败（${cwd}）: ${messageOf(error)}`)
         })
       })
       return off
-    }, 'mcp-skill-panel: project mcp session hook'),
+    }, 'mcp-panel: project mcp session hook'),
   )
-  disposers.push(installProjectMcpVisibility(ctx))
   return () => {
     for (const dispose of disposers) dispose()
   }
 }
 
 /** 面板添加/外部修改项目 MCP 文件后，强制重扫该工作空间并同步挂载（幂等）。 */
-export async function remountWorkspace(ctx: Context, root: string): Promise<void> {
-  await ensureWorkspace(ctx, root)
+export async function remountWorkspace(ctx: Context, root: string, policy: PolicyStore): Promise<void> {
+  await ensureWorkspace(ctx, root, policy)
 }
 
 /**
@@ -365,14 +323,14 @@ export async function remountWorkspace(ctx: Context, root: string): Promise<void
  *
  * 背景：projectOwners 是模块级内存表，插件 HMR 重载即清空，而 loader 根树上的
  * projmcp-* 行仍然存在 → 期间项目工具短暂按全局展示、项目级禁用作用域错判。
- * state.projectMcp（工作空间 → serverName → 禁用意图）保存了 owner 关系，
+ * state.json 的 projects 分区（工作空间 → serverName → 策略）保存了 owner 关系，
  * 以 loader 存活行交叉验证后重建；watcher/entries 由下次 session-start 的
  * ensureWorkspace 完整恢复。
  */
 export async function rebuildOwnersFromState(ctx: Context): Promise<void> {
   if (projectOwners.size > 0) return
   const stateFile = await readState().catch(() => undefined)
-  const map = stateFile?.projectMcp
+  const map = stateFile?.projects
   if (!map) return
   const live = new Set<string>()
   for (const entry of ctx.loader.entries()) {

@@ -255,15 +255,8 @@ check('computeStatus：表驱动四态（active 以 liveTools 真实注册为准
   }
 })
 
-// setSkillFlag / rowDisabledState（可维护性批次 P1-1 拆出 preset.ts 后的回归护栏）
-check('setSkillFlag 注入/移除 + rowDisabledState 读取', () => {
-  const text = '---\ntags:\n  - a\n---\n# title\n'
-  const withFlag = index.setSkillFlag(text, true)
-  assert.ok(withFlag.includes('disable-model-invocation: true'))
-  const back = index.setSkillFlag(withFlag, false)
-  assert.ok(!back.includes('disable-model-invocation'))
-  assert.equal(back, text)
-
+// rowDisabledState / setRowFlag（可维护性批次 P1-1 拆出 preset.ts 后的回归护栏）
+check('rowDisabledState / setRowFlag：组合文件 disabled 行读写', () => {
   const comp = '- id: mcp-a\n  name: "@deepseek-ai/dsh-mcp-client"\n  disabled: true\n  config:\n    serverName: aaa\n- id: b\n'
   assert.equal(index.rowDisabledState(comp, 'mcp-a'), true)
   assert.equal(index.rowDisabledState(comp, 'b'), null)
@@ -450,49 +443,7 @@ await checkAsync('scanWorkspaceMcp：无 .dsh/mcps 目录 → 空；坏 JSON 跳
   }
 })
 
-// ── add-skill：buildSkillMd / isValidSkillName（创建技能的纯逻辑） ───────────────
-check('isValidSkillName：kebab-case 合法/非法', () => {
-  assert.ok(index.isValidSkillName('codemap'))
-  assert.ok(index.isValidSkillName('my-skill-2'))
-  assert.ok(!index.isValidSkillName('MySkill'))
-  assert.ok(!index.isValidSkillName('my skill'))
-  assert.ok(!index.isValidSkillName('-lead'))
-  assert.ok(!index.isValidSkillName('trail-'))
-  assert.ok(!index.isValidSkillName(''))
-})
-
-check('buildSkillMd：frontmatter + 正文；description 含冒号/引号安全；setSkillFlag 可再注入', () => {
-  const md = index.buildSkillMd('codemap', '当用户询问 "项目结构" 或 file: 关系时', '# codemap\n## Commands\n正文')
-  assert.ok(md.startsWith('---\nname: codemap\n'))
-  assert.ok(md.includes('description: "当用户询问 \\"项目结构\\" 或 file: 关系时"'))
-  assert.ok(md.includes('## Commands'))
-  assert.ok(md.endsWith('正文\n'))
-  // 与既有 setSkillFlag 组合：停用标记可注入/移除且往返一致
-  const disabled = index.setSkillFlag(md, true)
-  assert.ok(disabled.includes('disable-model-invocation: true'))
-  assert.equal(index.setSkillFlag(disabled, false), md)
-})
-
-// ── 工具级禁用作用域：全局（跨工作区） vs 项目（仅所属工作区，需 owner 注册） ─────────
-await checkAsync('setToolDisabled / isToolDisabled：全局禁用无条件生效（persist=false 只动内存）', async () => {
-  await index.loadDisabledTools()
-  await index.setToolDisabled('globalsrv', 'mcp__globalsrv__ping', true, false)
-  assert.ok(index.isToolDisabled('mcp__globalsrv__ping', 'C:\\ws-a'))
-  assert.ok(index.isToolDisabled('mcp__globalsrv__ping', 'C:\\ws-b'))
-  assert.ok(index.isToolDisabled('mcp__globalsrv__ping'))
-  assert.ok(index.disabledToolsOf('globalsrv').has('mcp__globalsrv__ping'))
-  // 恢复：不影响后续用例
-  await index.setToolDisabled('globalsrv', 'mcp__globalsrv__ping', false, false)
-  assert.ok(!index.isToolDisabled('mcp__globalsrv__ping'))
-})
-
-await checkAsync('setToolDisabled：未注册 owner 的 server 视为全局（查询走全局表）', async () => {
-  await index.loadDisabledTools()
-  await index.setToolDisabled('projsrv', 'mcp__projsrv__x', true, false)
-  assert.ok(index.isToolDisabled('mcp__projsrv__x', 'C:\\ws-a'))
-  await index.setToolDisabled('projsrv', 'mcp__projsrv__x', false, false)
-  assert.ok(!index.isToolDisabled('mcp__projsrv__x'))
-})
+// 工具级禁用已并入策略层（domain/exposure.ts 的 policyDisablesTool，见 selftest-exposure.mjs）
 
 // ── projectServerName：项目 MCP 的 serverName 加路径哈希前缀（同名不同路径拆成独立服务） ──
 check('projectServerName：不同工作区同名 server 得到不同 serverName（哈希后缀隔离）', () => {

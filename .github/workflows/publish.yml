@@ -7,7 +7,7 @@ name: publish
 #      包必须已存在于 registry 才能进入该页面。
 #   2) 在 npmjs.com 该包页面：Settings → Trusted publishing → GitHub Actions，填写：
 #        Organization or user : lilyblessing
-#        Repository          : dsh-mcp-skill-panel
+#        Repository          : dsh-mcp-panel   ← 2026-09 起包与仓库已改名（改名后需在 npm 包的 Settings 里更新 Trusted Publisher 的 Repository 字段）
 #        Workflow filename   : publish.yml   ← 必须与本文件名完全一致
 #        Environment name    : 留空
 #        Allowed actions     : npm publish

@@ -1,34 +1,42 @@
 /**
- * HTTP 路由层：控制动作（toggleMcp/toggleSkill）与全部 /api/mcp-skill-panel/* 端点。
+ * HTTP 路由层：策略读写、启停意图、预设列表与诊断端点（前缀 `/api/mcp-panel`）。
  *
- * 从 index.ts 拆出（可维护性批次 P1-1），并收敛端点样板（P2-6）：
- * defineHandler 统一 method 校验 / 异步错误响应 / {ok:true,...} 包装。
+ * 设计（P2-6 收敛）：`handle`/`handleAny` 统一 method 校验 / 异步错误响应 /
+ * `{ok:true}` 包装；写操作要求 `x-panel-token` 与本进程随机令牌一致（阻断跨源 /
+ * DNS-rebinding 对本地控制端点的盲写），GET 只读端点保持开放。
+ *
+ * 端点与职责：
+ * - `GET  /state`        面板视图（注册表行 × 策略 × 预设隔离后的生效档位）
+ * - `GET  /presets`      可关联的 agent 预设列表
+ * - `POST /policy`       写策略（档位 / 预设关联 / 工具级禁用），支持批量
+ * - `POST /policy/commit` 立即应用 next-session 模式积压的待生效意图（有缓存代价）
+ * - `GET/POST /config`   生效时机（immediate / next-session）
+ * - `POST /mcp/add`、`POST /mcp/preview`  快速迁移（粘贴 mcpServers JSON）
+ * - `GET  /debug`、`POST /debug/collect`  运维诊断
  */
 import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import { mkdir, readFile, writeFile, rename, access } from 'node:fs/promises'
-import { basename, dirname, join, parse as parsePath } from 'node:path'
-import { homedir } from 'node:os'
+import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { readState, writeState, stateApplyMode, type ApplyMode } from './state'
-import { setSkillFlag, rowDisabledState, isValidSkillName, buildSkillMd } from './preset'
-import { pendingMcp, applyPendingMcp } from './pending'
-import { findPresetRowByEntryId } from './preset-mcp'
-import { resolveAgent, resolveCollectScopeKey, scopeKeySource, getSchemasView, mergeSchemas, collectMcp, collectSkills, confirmedSkills, pruneExpired, DOMAIN_TTL_MS, SKILL_TOGGLE_POLL_MS, type DomainCaches, type Deps } from './collect'
-import { isMcpEntry, serverNameOf } from './mcp-entry'
+import { resolveAgent, resolveCollectScopeKey, scopeKeySource, getSchemasView, mergeSchemas, collectMcp, pruneExpired, DOMAIN_TTL_MS, type DomainCaches } from './collect'
+import { isMcpEntry } from './mcp-entry'
 import { parseMcpServersJson, serversToPatchYaml, serversToRows, type McpServers, type McpRowConfig } from './mcp-convert'
-import { remountWorkspace, projectServerOwner, getActiveWorkspace } from './project-mcp'
-import { disabledToolsOf, setToolDisabled } from './tool-disable'
+import { remountWorkspace, getActiveWorkspace } from './project-mcp'
 import type { McpCallController } from './mcpcall'
-import type { CatalogRuntime, Config } from './index'
+import type { Config } from './index'
+import type { CatalogRuntime } from './runtime-types'
+import type { PolicyStore } from './domain/policy'
+import type { Registry } from './domain/registry'
+import { isExposure, normalizePresetScope, type Exposure, type PresetScope } from './domain/exposure'
+import { agentPresetId, agentWorkspace, lastSessionScope } from './domain/session-scope'
+import type { PresetListView } from './shared-types'
 import { messageOf } from './util'
 
-const API_PREFIX = '/api/mcp-skill-panel'
+const API_PREFIX = '/api/mcp-panel'
 /** 旧前缀（0.3.1 及以前为 /api/runtime-inventory），保留兼容 */
 const LEGACY_API_PREFIX = '/api/runtime-inventory'
-/** skill toggle 后等待 watcher 失效 catalog 的最长时间 */
-const SKILL_TOGGLE_CONFIRM_MS = 5_000
-/** 进程级随机令牌：写操作（启停/config）要求客户端在 x-panel-token 头携带；
- * 阻断跨源 / DNS-rebinding 对本地控制端点的盲写。GET 只读保持开放。 */
+/** 进程级随机令牌：写操作（策略/config）要求客户端在 x-panel-token 头携带。 */
 const PANEL_TOKEN = randomBytes(32).toString('hex')
 /** readBody 体积上限：防无界 body 累积（本地 DoS 向量）。 */
 const MAX_BODY_BYTES = 64 * 1024
@@ -40,6 +48,21 @@ export type Route = {
   kind: 'exact'
   path: string
   handler: (req: Req, res: Res) => void
+}
+
+export interface RoutesDeps {
+  /** HTTP 请求 ctx（路由注册在它上面）。 */
+  ctx: Context
+  /** 插件 apply ctx（服务视图更完整，如 agentPresets）。 */
+  hostCtx: Context
+  caches: DomainCaches
+  catalogRuntime: CatalogRuntime
+  config: Config
+  controller: McpCallController
+  registry: Registry
+  policy: PolicyStore
+  /** 手动触发一次 catalog 采集（调试端点用）。 */
+  triggerSnapshot: () => Promise<void>
 }
 
 function json(res: Res, code: number, body: unknown): void {
@@ -112,9 +135,7 @@ function handle(method: 'GET' | 'POST', run: (req: Req) => Promise<object>, guar
 /**
  * 同 path 多 method 路由：webServer 的 exact 路由按 path 唯一（同 path 重复注册
  * 会中断后续注册），因此 GET+POST 共存的端点必须合并为单个 handler 内部分发。
- * guardPosts=true 时仅 POST 需要 x-panel-token（GET 只读端点始终开放，
- * 与 0.4.7+「读端点开放、写操作鉴权」的设计一致；2026-08-27 修复：此前
- * guardPosts 对 GET 也生效，/config 读取被锁 → 面板生效时机恒显示默认值）。
+ * guardPosts=true 时仅 POST 需要 x-panel-token。
  */
 function handleAny(entries: Array<{ method: 'GET' | 'POST'; run: (req: Req) => Promise<object> }>, guardPosts = false): (req: Req, res: Res) => void {
   return (req, res) => {
@@ -127,180 +148,7 @@ function handleAny(entries: Array<{ method: 'GET' | 'POST'; run: (req: Req) => P
   }
 }
 
-/* ── 控制动作 ──────────────────────────────────────────────────────────── */
-
-async function toggleMcp(deps: Deps, entryId: string, disabled: boolean, applyMode?: ApplyMode) {
-  const { ctx } = deps
-  const mode = applyMode ?? stateApplyMode(await readState())
-  let entry: Awaited<ReturnType<Context['loader']['resolve']>> | undefined
-  try {
-    entry = ctx.loader.resolve(entryId)
-  } catch {
-    entry = undefined
-  }
-  // rc.1 standing 组合兜底：preset 行不在 loader.entries/resolve 里（resolve 抛
-  // "cannot resolve entry"）。行以 source:'preset' 进面板，开关走 state.json
-  // desired 意图（恒 pending），由 syncPresetFiles/applyStateResidue 物化/补齐。
-  if (!entry) {
-    const found = await findPresetRowByEntryId(ctx, entryId)
-    if (found) {
-      const state = await readState()
-      state.mcp ??= {}
-      state.mcp[found.presetPath] ??= {}
-      // lastApplied 与 live 路径一致取文件实际状态（preset.ts:rowDisabledState），
-      // 读不到文件才回落 inventory 值（防 standing/文件漂移误判外部修改）。
-      let fileState: boolean | null = found.row.disabled
-      try {
-        const { rowDisabledState } = await import('./preset')
-        fileState = rowDisabledState(await readFile(found.presetPath, 'utf8'), found.row.rowId)
-      } catch {
-        fileState = found.row.disabled
-      }
-      state.mcp[found.presetPath][found.row.rowId] = { desired: disabled, lastApplied: fileState }
-      await writeState(state)
-      // 内存队列同样记录（pending 徽标 + 下次边界 applyPendingMcp 尝试 entry.update，
-      // 行仍不可 resolve 时保留队列，见 pending.ts:50-53 行失效语义——此处反向：
-      // 找不到才保留意图；若将来行回到 loader，边界可正常应用）。
-      pendingMcp.set(entryId, { entryId, file: found.presetPath, rowId: found.row.rowId, disabled })
-      if (!disabled && deps.controller) {
-        deps.controller.markUserEnabled(found.row.serverName)
-      }
-      return {
-        entryId,
-        rowId: found.row.rowId,
-        serverName: found.row.serverName,
-        disabled,
-        desired: disabled,
-        running: found.row.running,
-        persisted: true,
-        file: found.presetPath,
-        applied: false,
-        pending: true,
-        source: 'preset' as const,
-      }
-    }
-  }
-  if (!entry) {
-    throw new Error(`entry "${entryId}" is not an MCP row`)
-  }
-  // 只允许启停 MCP 行：防止调用方传入任意 loader 行（含核心/其他插件行）被误停用。
-  if (!isMcpEntry(entry)) {
-    throw new Error(`entry "${entryId}" is not an MCP row`)
-  }
-  const rowId = entry.options.id
-  const serverName = serverNameOf(entry)
-  // 项目级 MCP 行（projmcp-*，来自 .dsh/mcps 扫描）：启停意图持久化到
-  // state.json 的 projectMcp 段（重启/热更新由 syncRows 应用），不写 preset 文件
-  // （项目行不在任何 preset 组合里，写 preset 无意义且可能误碰 root cordis.yml）。
-  const projectWorkspace = projectServerOwner(serverName)
-  if (projectWorkspace !== undefined) {
-    if (!disabled && deps.controller) {
-      deps.controller.markUserEnabled(serverName)
-    }
-    const state = await readState()
-    state.projectMcp ??= {}
-    state.projectMcp[projectWorkspace] ??= {}
-    state.projectMcp[projectWorkspace][serverName] = disabled
-    await writeState(state)
-    // 立即生效（项目行无「下次会话」语义：服务始终常驻，开关即实时切线）
-    await entry.update({ disabled })
-    return {
-      entryId,
-      rowId,
-      serverName,
-      disabled,
-      running: entry.fiber !== undefined,
-      persisted: true,
-      workspace: projectWorkspace,
-      applied: true,
-      pending: false,
-    }
-  }
-  // P1 会话边界生效（v0.5.0）：next-session 模式只记意图（进入待生效队列），
-  // 不立即 entry.update —— 运行时 tools 前缀不变 → 当前会话零缓存失效、零费用。
-  // 生效时机：新会话 agent/session-start 首次请求前 applyPendingMcp，或重启后
-  // syncPresetFiles 物化预设。immediate（默认）保持原行为：下轮即生效（会 miss）。
-  const deferred = mode === 'next-session'
-  if (deferred) {
-    pendingMcp.set(entryId, { entryId, file: (entry.parent?.tree as { filename?: string } | undefined)?.filename ?? null, rowId, disabled })
-  } else {
-    pendingMcp.delete(entryId)
-    await entry.update({ disabled })
-    // 用户手动打开（!disabled）：清除 AI 临时启用标记（aiEnabled/计数/lastUsed +
-    // state.json ai owner）—— 转为「用户打开」语义：模型立即可见、回收器不再回收。
-    // 用户手动关闭（disabled）：AI 标记保持原样（若原本 AI 启用中，回收器/失败恢复照常管理）。
-    if (!disabled && deps.controller) {
-      deps.controller.markUserEnabled(serverNameOf(entry))
-    }
-  }
-  // 持久化：v0.1.1 起运行期绝不写预设文件（触发 dsh-agent-presets stamp 重挂事故）。
-  // 只把意图写入插件状态文件，由下次启动的 syncPresetFiles() 物化到预设文件。
-  const tree = entry.parent?.tree as { filename?: string } | undefined
-  const file = tree?.filename
-  let fileState: boolean | null = null
-  if (typeof file === 'string' && file.length > 0) {
-    try {
-      fileState = rowDisabledState(await readFile(file, 'utf8'), rowId)
-    } catch {
-      fileState = null
-    }
-  }
-  let persisted = false
-  if (typeof file === 'string' && file.length > 0) {
-    const state = await readState()
-    state.mcp ??= {}
-    state.mcp[file] ??= {}
-    state.mcp[file][rowId] = { desired: disabled, lastApplied: fileState }
-    await writeState(state)
-    persisted = true
-  }
-  return {
-    entryId,
-    rowId,
-    serverName,
-    disabled,
-    running: entry.fiber !== undefined,
-    persisted,
-    file: file ?? null,
-    applied: !deferred,
-    pending: deferred,
-  }
-}
-
-async function toggleSkill(deps: Deps, skillName: string, disabled: boolean, sessionId: string | undefined) {
-  const { ctx } = deps
-  const agent = resolveAgent(ctx, sessionId)
-  const cwd = agent?.session?.header?.cwd
-  const def = await ctx.skills.get(skillName, { scope: agent, cwd })
-  if (!def?.path) {
-    throw new Error(`skill "${skillName}" has no file path (${def?.source ?? 'unknown source'})`)
-  }
-  const text = await readFile(def.path, 'utf8')
-  const next = setSkillFlag(text, disabled)
-  if (next !== text) await writeFile(def.path, next, 'utf8')
-  // 写文件后轮询确认 catalog 已生效（skill-filesystem 的 watcher 异步失效）。
-  // 让响应即真相，前端无需等下一轮全量刷新才看到新状态。
-  const deadline = Date.now() + SKILL_TOGGLE_CONFIRM_MS
-  let confirmed = false
-  let wait = SKILL_TOGGLE_POLL_MS
-  while (Date.now() < deadline) {
-    const after = await ctx.skills.get(skillName, { scope: agent, cwd })
-    if (after && after.invocation?.modelInvocable === !disabled) {
-      confirmed = true
-      break
-    }
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) break
-    await ctx.timeout(Math.min(wait, remaining))
-    wait = Math.min(wait * 2, 1000)
-  }
-  // 记录确认值，供 collectState 覆盖 snapshot 的陈旧 candidate（watcher 未及失效）
-  pruneExpired(confirmedSkills, Date.now())
-  if (confirmed) confirmedSkills.set(skillName, { modelInvocable: !disabled, at: Date.now() })
-  return { name: skillName, disabled, modelInvocable: !disabled, path: def.path, confirmed }
-}
-
-/* ── 添加 MCP（快速迁移）：mcpServers JSON → 全局 profile patch / 项目 .dsh/mcps ── */
+/* ── 快速迁移：mcpServers JSON → 全局 profile patch / 项目 .dsh/mcps ─────── */
 
 /**
  * 路由写文件队列：串行化 appendGlobalPatch / writeProjectMcp 的「读-改-写」。
@@ -339,7 +187,6 @@ function existingRowIds(ctx: Context, patchText: string): Set<string> {
 
 /** 追加 `- insert:` patch 块到 profile cordis.patch.yml（串行排队 + 原子写 + 跟随原换行风格）。 */
 function appendGlobalPatch(ctx: Context, yamlBlock: string): Promise<{ file: string }> {
-  // 读-改-写整体进入全局写队列：并发请求下后到者基于先到者的写盘结果继续。
   const run = fileWriteChain.then(async () => {
     const file = profilePatchPath(ctx)
     const existing = await readFile(file, 'utf8').catch(() => '')
@@ -350,14 +197,12 @@ function appendGlobalPatch(ctx: Context, yamlBlock: string): Promise<{ file: str
     await rename(`${file}.tmp`, file)
     return { file }
   })
-  // 链尾兜底：单次失败不阻塞后续排队请求
   fileWriteChain = run.catch(() => undefined)
   return run
 }
 
 /** 把 servers 合并写入 <workspace>/.dsh/mcps/mcp.json（新建 server 覆盖同名旧值；读-改-写串行化）。 */
 function writeProjectMcp(workspace: string, servers: McpServers): Promise<{ file: string }> {
-  // 同一工作区并发 add 的场景（多会话）：排队保证 merge 基底是最新内容，不丢更新。
   const run = fileWriteChain.then(async () => {
     const mcpsDir = join(workspace, '.dsh', 'mcps')
     const file = join(mcpsDir, 'mcp.json')
@@ -400,14 +245,14 @@ async function addGlobalMcp(ctx: Context, servers: McpServers): Promise<{ file: 
   const rows = [...toAdd.values()]
   if (rows.length === 0) return { file, added: 0, skipped }
   // 先挂载后落盘：挂载失败（如 serverName 全局唯一冲突）不应污染 patch
-  const mounted: Array<McpRowConfig> = []
+  const mounted: McpRowConfig[] = []
   for (const row of rows) {
     try {
       await ctx.loader.create(row)
       mounted.push(row)
     } catch (error) {
       skipped.push(String(row.config.serverName))
-      ctx.logger.warn?.(`mcp-skill-panel: 全局 MCP "${row.config.serverName}" 挂载失败: ${messageOf(error)}`)
+      ctx.logger.warn?.(`mcp-panel: 全局 MCP "${row.config.serverName}" 挂载失败: ${messageOf(error)}`)
     }
   }
   if (mounted.length === 0) return { file, added: 0, skipped }
@@ -438,86 +283,51 @@ interface McpServerConfigLike {
   toolCallTimeoutMs?: number
 }
 
-/* ── 添加 Skill（项目/全局） ───────────────────────────────────────────── */
+/* ── 策略写入 ─────────────────────────────────────────────────────────── */
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path)
-    return true
-  } catch {
-    return false
-  }
+/** 单条策略更新（面板提交的形状）。 */
+interface PolicyUpdateInput {
+  serverName?: unknown
+  workspace?: unknown
+  exposure?: unknown
+  presets?: unknown
+  disabledTools?: unknown
 }
 
-/**
- * 解析 skill 的项目根：与 dsh-skill-filesystem 的 findProjectRoot 一致 ——
- * 从 cwd 向上找最近含 .git 的目录，找不到退化为 cwd 本身。
- * （skill 的项目发现走这个规则，MCP 的工作空间规则是裸 cwd，两者不同。）
- */
-async function resolveSkillProjectRoot(cwd: string): Promise<string> {
-  let current = cwd
-  for (;;) {
-    if (await pathExists(join(current, '.git'))) return current
-    const parent = parsePath(current).root
-    if (current === parent) return cwd
-    current = dirname(current)
+function normalizeUpdate(raw: PolicyUpdateInput): {
+  serverName: string
+  workspace?: string
+  patch: Partial<{ exposure: Exposure; presets: PresetScope; disabledTools: string[] }>
+} {
+  const serverName = typeof raw.serverName === 'string' ? raw.serverName.trim() : ''
+  if (serverName.length === 0) throw new Error('serverName is required')
+  const workspace = typeof raw.workspace === 'string' && raw.workspace.length > 0 ? raw.workspace : undefined
+  const patch: Partial<{ exposure: Exposure; presets: PresetScope; disabledTools: string[] }> = {}
+  if (raw.exposure !== undefined) {
+    if (!isExposure(raw.exposure)) throw new Error(`invalid exposure: ${String(raw.exposure)}`)
+    patch.exposure = raw.exposure
   }
-}
-
-/** 添加 skill：name/description/body → <root>/skills/<name>/SKILL.md（存在即拒绝）。 */
-async function addSkill(
-  name: string,
-  description: string,
-  body: string,
-  target: 'global' | 'project',
-  workspace: string | undefined,
-): Promise<{ path: string }> {
-  if (!isValidSkillName(name)) {
-    throw new Error(`技能名 "${name}" 需为 kebab-case（小写字母/数字/连字符）`)
+  if (raw.presets !== undefined) patch.presets = normalizePresetScope(raw.presets)
+  if (raw.disabledTools !== undefined) {
+    const list = Array.isArray(raw.disabledTools) ? raw.disabledTools : []
+    patch.disabledTools = list.filter((v): v is string => typeof v === 'string' && v.length > 0).sort()
   }
-  if (description.trim().length === 0) throw new Error('描述不能为空')
-  if (body.trim().length === 0) throw new Error('指令（正文）不能为空')
-  let base: string
-  if (target === 'global') {
-    base = join(homedir(), '.dsh', 'skills')
-  } else {
-    if (typeof workspace !== 'string' || workspace.length === 0) throw new Error('project 目标需要 workspace（当前会话工作空间）')
-    base = join(await resolveSkillProjectRoot(workspace), '.dsh', 'skills')
-  }
-  const dir = join(base, name)
-  if (await pathExists(dir)) throw new Error(`技能已存在：${dir}`)
-  await mkdir(dir, { recursive: true })
-  const file = join(dir, 'SKILL.md')
-  try {
-    // 'wx'：目标不存在才创建 → 并发同名创建时后到者抛 EEXIST（不再互相覆盖）。
-    // 单文件小内容直接独占写，原子性由 wx 语义保证。
-    await writeFile(file, buildSkillMd(name, description, body), { encoding: 'utf8', flag: 'wx' })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`技能已存在：${dir}`)
-    throw error
-  }
-  return { path: file }
+  if (Object.keys(patch).length === 0) throw new Error('至少需要 exposure / presets / disabledTools 之一')
+  return workspace === undefined ? { serverName, patch } : { serverName, workspace, patch }
 }
 
 /* ── 路由 ──────────────────────────────────────────────────────────────── */
 
-export function makeRoutes(
-  ctx: Context,
-  caches: DomainCaches,
-  catalogRuntime: CatalogRuntime,
-  config: Config = {},
-  controller: McpCallController | undefined,
-  triggerSnapshot: () => Promise<void>,
-): Route[] {
-  const deps: Deps = { ctx, caches, catalogRuntime, controller }
-  const { mcpCache, skillsCache, invalidateMcp, invalidateSkills } = caches
+export function makeRoutes(deps: RoutesDeps): Route[] {
+  const { ctx, hostCtx, caches, catalogRuntime, config, controller, registry, policy, triggerSnapshot } = deps
+  const { mcpCache, invalidateMcp } = caches
 
   const cachedMcp = (sessionId: string | undefined) => {
     const key = sessionId ?? '*'
     pruneExpired(mcpCache, Date.now())
     const hit = mcpCache.get(key)
     if (hit && Date.now() - hit.at < DOMAIN_TTL_MS) return hit.promise
-    const promise = collectMcp(deps, sessionId).catch((error) => {
+    const promise = collectMcp({ ctx, caches, catalogRuntime, registry, policy, controller }, sessionId).catch((error) => {
       mcpCache.delete(key)
       throw error
     })
@@ -525,17 +335,34 @@ export function makeRoutes(
     return promise
   }
 
-  const cachedSkills = (sessionId: string | undefined) => {
-    const key = sessionId ?? '*'
-    pruneExpired(skillsCache, Date.now())
-    const hit = skillsCache.get(key)
-    if (hit && Date.now() - hit.at < DOMAIN_TTL_MS) return hit.promise
-    const promise = collectSkills(deps, sessionId).catch((error) => {
-      skillsCache.delete(key)
-      throw error
-    })
-    skillsCache.set(key, { at: Date.now(), promise })
-    return promise
+  /** 当前面板会话的 preset id 与工作空间（预设关联 UI 的「当前会话」标注）。 */
+  const sessionScopeOf = (sessionId: string | undefined) => {
+    const agent = resolveAgent(hostCtx, sessionId)
+    const remembered = lastSessionScope()
+    return {
+      presetId: agentPresetId(hostCtx, agent) ?? remembered.presetId,
+      workspace: agentWorkspace(agent) ?? remembered.workspace,
+    }
+  }
+
+  async function listPresets(sessionId: string | undefined): Promise<PresetListView> {
+    const { presetId } = sessionScopeOf(sessionId)
+    try {
+      const list = await hostCtx.agentPresets.list()
+      return {
+        presets: list.map((preset) => {
+          const row: { id: string; name?: string; description?: string; broken?: string } = { id: preset.id }
+          if (preset.name !== undefined) row.name = preset.name
+          if (preset.description !== undefined) row.description = preset.description
+          if (preset.broken !== undefined) row.broken = preset.broken
+          return row
+        }),
+        current: presetId ?? null,
+      }
+    } catch (error) {
+      // 服务视图受限（HTTP ctx 下历史实测）：降级为「仅手填 id」，不阻塞面板其它功能
+      return { presets: [], current: presetId ?? null, error: messageOf(error) }
+    }
   }
 
   const routes: Route[] = [
@@ -543,127 +370,91 @@ export function makeRoutes(
       kind: 'exact',
       path: `${API_PREFIX}/state`,
       handler: handle('GET', async (req) => {
-        const url = req.url ?? ''
-        const sessionId = queryParam(url, 'session')
-        const part = queryParam(url, 'part') ?? 'all'
-        if (part === 'mcp') return { state: await cachedMcp(sessionId) }
-        if (part === 'skills') return { state: await cachedSkills(sessionId) }
-        // all（缺省）：完整视图
-        const [mcp, skills] = await Promise.all([cachedMcp(sessionId), cachedSkills(sessionId)])
-        return { state: { ...mcp, ...skills, errors: [...mcp.errors, ...skills.errors] } }
+        const sessionId = queryParam(req.url ?? '', 'session')
+        return { state: await cachedMcp(sessionId) }
       }),
     },
     {
       kind: 'exact',
-      path: `${API_PREFIX}/mcp/toggle`,
-      handler: handle('POST', async (req) => {
-        const parsed = JSON.parse((await readBody(req)) || '{}') as { entryId?: string; disabled?: boolean }
-        if (!parsed.entryId) throw new Error('entryId is required')
-        const applyMode = stateApplyMode(await readState())
-        const result = await toggleMcp(deps, parsed.entryId, Boolean(parsed.disabled), applyMode)
-        invalidateMcp()
-        return result
-      }, true),
+      path: `${API_PREFIX}/presets`,
+      handler: handle('GET', async (req) => {
+        const sessionId = queryParam(req.url ?? '', 'session')
+        return await listPresets(sessionId)
+      }),
     },
     {
       kind: 'exact',
-      path: `${API_PREFIX}/mcp/toggleBatch`,
+      path: `${API_PREFIX}/policy`,
       handler: handle('POST', async (req) => {
-        // P1 批量合并：一次请求内串行多次 entry.update（immediate 模式），循环外单次
-        // invalidateMcp。探索式批量启停的 N 次独立 toggle → N 次 tools/change → N 次
-        // 100% 前缀 miss；合并后收敛为单次。next-session 模式则只记意图进待生效队列，
-        // 无任何运行时 tools 变化（零 miss）。运行期仍不写预设文件（事故 5.1 铁律）。
-        const parsed = JSON.parse((await readBody(req)) || '{}') as {
-          toggles?: Array<{ entryId?: string; disabled?: boolean }>
-        }
-        const toggles = Array.isArray(parsed.toggles) ? parsed.toggles : []
-        if (toggles.length === 0) throw new Error('toggles array is required (non-empty)')
-        const applyMode = stateApplyMode(await readState())
-        const results: Array<
-          | Awaited<ReturnType<typeof toggleMcp>>
-          | { entryId: string; ok: false; error: string }
-        > = []
-        let failed = 0
-        for (const item of toggles) {
-          if (!item?.entryId) throw new Error('entryId is required in every toggle item')
+        const parsed = JSON.parse((await readBody(req)) || '{}') as { updates?: PolicyUpdateInput[]; applyMode?: ApplyMode }
+        const updates = Array.isArray(parsed.updates) ? parsed.updates : []
+        if (updates.length === 0) throw new Error('updates array is required (non-empty)')
+        const applyMode: ApplyMode =
+          parsed.applyMode === 'next-session' || parsed.applyMode === 'immediate'
+            ? parsed.applyMode
+            : stateApplyMode(await readState())
+        let applied = false
+        let count = 0
+        const failures: Array<{ serverName: string; error: string }> = []
+        for (const raw of updates) {
           try {
-            results.push(await toggleMcp(deps, item.entryId, Boolean(item.disabled), applyMode))
+            const { serverName, workspace, patch } = normalizeUpdate(raw)
+            const result = await policy.set({ serverName, workspace, patch, applyMode })
+            applied = applied || result.applied
+            count += 1
           } catch (error) {
-            // 单项失败（如行已失效）不阻断整批：其余项照常应用，失败信息随结果返回
-            failed += 1
-            results.push({ entryId: item.entryId, ok: false, error: messageOf(error) })
+            failures.push({ serverName: String(raw?.serverName ?? '?'), error: messageOf(error) })
           }
         }
-        invalidateMcp()
-        return { results, count: results.length, failed }
+        if (count > 0) {
+          // 策略变化可能改变期望进程状态：等注册表刷新后再返回，面板一次刷新即一致
+          await registry.refreshNow()
+          invalidateMcp()
+        }
+        return { applied, count, failed: failures.length, failures, applyMode }
       }, true),
     },
     {
       kind: 'exact',
-      path: `${API_PREFIX}/mcp/applyPending`,
+      path: `${API_PREFIX}/policy/commit`,
       handler: handle('POST', async () => {
-        // P1 会话边界：「立即应用待生效变更」强制生效入口。把 next-session 模式积压的
-        // 待办一次性 entry.update（=临时转 immediate），随后的请求会 miss（调用方提示费用）。
-        const applied = await applyPendingMcp(deps)
+        // next-session 模式：「立即应用」把这批待生效意图提升为生效 —— 当轮工具集变化，
+        // 当前会话前缀缓存失效（面板已提示费用），客户端刷新后会看到 live 与 intent 一致。
+        const applied = await policy.commitPending()
+        await registry.refreshNow()
         invalidateMcp()
         return { applied }
       }, true),
     },
     {
       kind: 'exact',
-      path: `${API_PREFIX}/skill/toggle`,
+      path: `${API_PREFIX}/mcp/toolToggle`,
       handler: handle('POST', async (req) => {
-        const parsed = JSON.parse((await readBody(req)) || '{}') as { name?: string; disabled?: boolean; session?: string }
-        if (!parsed.name) throw new Error('name is required')
-        const result = await toggleSkill(deps, parsed.name, Boolean(parsed.disabled), parsed.session)
-        invalidateSkills()
-        return result
-      }, true),
-    },
-    {
-      kind: 'exact',
-      path: `${API_PREFIX}/skill/add`,
-      handler: handle('POST', async (req) => {
-        // 添加技能：name/description/body → <root>/skills/<name>/SKILL.md，
-        // watcher 自动失效目录（无需手动 invalidate），写入即生效。
+        // 工具级禁用：写进该 server 的策略（项目级 server 写其工作空间表）
         const parsed = JSON.parse((await readBody(req)) || '{}') as {
-          name?: string
-          description?: string
-          body?: string
-          target?: string
+          serverName?: string
+          toolName?: string
+          disabled?: boolean
           workspace?: string
         }
-        if (typeof parsed.name !== 'string' || parsed.name.trim().length === 0) throw new Error('name is required')
-        if (typeof parsed.description !== 'string') throw new Error('description is required')
-        if (typeof parsed.body !== 'string') throw new Error('body is required')
-        const target = parsed.target === 'project' ? 'project' : 'global'
-        let workspace = typeof parsed.workspace === 'string' && parsed.workspace.length > 0 ? parsed.workspace : undefined
-        if (!workspace) workspace = resolveAgent(ctx, undefined)?.session?.header?.cwd
-        const result = await addSkill(parsed.name, parsed.description, parsed.body, target, workspace)
-        // 确认轮询（与 toggleSkill 同思路）：skill-filesystem 的 watcher 异步失效
-        // （~200ms 稳定窗口），立即 snapshot 仍是旧目录；轮询到技能可被发现再返回，
-        // 保证弹窗关闭后面板第一次刷新就能看到新技能。
-        const agent = resolveAgent(ctx, undefined)
-        const cwd = agent?.session?.header?.cwd
-        const deadline = Date.now() + SKILL_TOGGLE_CONFIRM_MS
-        let confirmed = false
-        let wait = SKILL_TOGGLE_POLL_MS
-        while (Date.now() < deadline) {
-          const def = await ctx.skills.get(parsed.name, { scope: agent, cwd }).catch(() => undefined)
-          if (def) {
-            confirmed = true
-            break
-          }
-          const remaining = deadline - Date.now()
-          if (remaining <= 0) break
-          await ctx.timeout(Math.min(wait, remaining))
-          wait = Math.min(wait * 2, 1000)
-        }
-        // 记录确认值：collectState 用它覆盖 snapshot 的陈旧 candidate（watcher 未及失效）
-        pruneExpired(confirmedSkills, Date.now())
-        if (confirmed) confirmedSkills.set(parsed.name, { modelInvocable: true, at: Date.now() })
-        invalidateSkills()
-        return { target, ...result, confirmed }
+        if (typeof parsed.serverName !== 'string' || parsed.serverName.length === 0) throw new Error('serverName is required')
+        if (typeof parsed.toolName !== 'string' || parsed.toolName.length === 0) throw new Error('toolName is required')
+        const ref = registry.refFor(parsed.serverName, undefined)
+        const workspace = typeof parsed.workspace === 'string' && parsed.workspace.length > 0 ? parsed.workspace : ref?.workspace
+        const current = policy.effective(parsed.serverName, workspace).disabledTools
+        const disabled = Boolean(parsed.disabled)
+        const next = disabled
+          ? [...new Set([...current, parsed.toolName])].sort()
+          : current.filter((name) => name !== parsed.toolName)
+        await policy.set({
+          serverName: parsed.serverName,
+          workspace,
+          patch: { disabledTools: next },
+          applyMode: stateApplyMode(await readState()),
+        })
+        await registry.refreshNow()
+        invalidateMcp()
+        return { serverName: parsed.serverName, toolName: parsed.toolName, disabled, disabledTools: next }
       }, true),
     },
     {
@@ -675,30 +466,23 @@ export function makeRoutes(
           run: async () => {
             const state = await readState()
             return {
-              autoManage: catalogRuntime.autoManage,
               applyMode: stateApplyMode(state),
-              configAutoManage: config.autoManage ?? null,
+              middleLayer: config.middleLayer !== false,
+              defaultExposure: config.defaultExposure ?? 'native',
             }
           },
         },
         {
           method: 'POST',
           run: async (req) => {
-            const parsed = JSON.parse((await readBody(req)) || '{}') as {
-              autoManage?: boolean
-              applyMode?: ApplyMode
-            }
+            const parsed = JSON.parse((await readBody(req)) || '{}') as { applyMode?: ApplyMode }
             const state = await readState()
             state.config ??= {}
-            if (typeof parsed.autoManage === 'boolean') {
-              state.config.autoManage = parsed.autoManage
-            }
             if (parsed.applyMode === 'immediate' || parsed.applyMode === 'next-session') {
               state.config.applyMode = parsed.applyMode
             }
             await writeState(state)
-            if (typeof parsed.autoManage === 'boolean') catalogRuntime.applyAutoManage(parsed.autoManage)
-            return { autoManage: catalogRuntime.autoManage, applyMode: stateApplyMode(state) }
+            return { applyMode: stateApplyMode(state) }
           },
         },
       ], true),
@@ -716,32 +500,39 @@ export function makeRoutes(
         for (const [server, info] of Object.entries(catalogRuntime.catalog)) {
           catalog[server] = { tools: info.tools.length, fetchedAt: info.fetchedAt, source: info.source }
         }
-        // HTTP 路径 scope 诊断（2026-08-27 filesystem「无工具」取证）：
-        // 复现 collectMcp 的 scope 解析 + schemas 视图，确认 key 是否命中 standing 层链。
         const scopeDiag: Record<string, unknown> = { error: null }
         try {
-          const scopeKey = await resolveCollectScopeKey(ctx, undefined)
-          const scoped = scopeKey ? getSchemasView(ctx, caches, scopeKey, DOMAIN_TTL_MS) : []
-          const globalView = getSchemasView(ctx, caches, undefined, DOMAIN_TTL_MS)
+          const scopeKey = await resolveCollectScopeKey(hostCtx, undefined)
+          const scoped = scopeKey ? getSchemasView(hostCtx, caches, scopeKey, DOMAIN_TTL_MS) : []
+          const globalView = getSchemasView(hostCtx, caches, undefined, DOMAIN_TTL_MS)
           const merged = scopeKey ? mergeSchemas(scoped, globalView) : scoped
-          const mcpNames = merged
-            .map((s) => String(s?.name ?? ''))
-            .filter((name) => name.startsWith('mcp__'))
-          const scopedMcp = scoped.map((s) => String(s?.name ?? '')).filter((name) => name.startsWith('mcp__'))
-          const globalMcp = globalView.map((s) => String(s?.name ?? '')).filter((name) => name.startsWith('mcp__'))
+          const mcpNames = merged.map((s) => String(s?.name ?? '')).filter((name) => name.startsWith('mcp__'))
           scopeDiag.scopeKeyType = scopeKey ? typeof scopeKey : null
           scopeDiag.scopeKeySource = scopeKeySource()
           scopeDiag.scopedTotal = scoped.length
-          scopeDiag.scopedMcpTools = scopedMcp.length
           scopeDiag.globalTotal = globalView.length
-          scopeDiag.globalMcpTools = globalMcp.length
           scopeDiag.mergedMcpTools = mcpNames.length
-          scopeDiag.scopedMcpSample = scopedMcp.slice(0, 20)
-          scopeDiag.globalMcpSample = globalMcp.slice(0, 20)
+          scopeDiag.scopedMcpSample = mcpNames.slice(0, 20)
         } catch (error) {
           scopeDiag.error = messageOf(error)
         }
-        return { diag: catalogRuntime.diag, catalog, scopeDiag }
+        const snapshot = registry.snapshot()
+        return {
+          diag: catalogRuntime.diag,
+          catalog,
+          scopeDiag,
+          registry: {
+            ...registry.diagnostics(),
+            servers: [...snapshot.all.values()].map((ref) => ({
+              serverName: ref.serverName,
+              source: ref.source,
+              disabled: ref.disabled,
+              running: ref.running,
+              exposure: policy.effective(ref.serverName, ref.workspace).exposure,
+            })),
+          },
+          policy: policy.diagnostics(),
+        }
       }),
     },
     {
@@ -754,27 +545,8 @@ export function makeRoutes(
     },
     {
       kind: 'exact',
-      path: `${API_PREFIX}/mcp/toolToggle`,
-      handler: handle('POST', async (req) => {
-        // 工具级禁用：serverName + 工具全名（mcp__<server>__<tool>）
-        const parsed = JSON.parse((await readBody(req)) || '{}') as { serverName?: string; toolName?: string; disabled?: boolean }
-        if (typeof parsed.serverName !== 'string' || parsed.serverName.length === 0) throw new Error('serverName is required')
-        if (typeof parsed.toolName !== 'string' || parsed.toolName.length === 0) throw new Error('toolName is required')
-        await setToolDisabled(parsed.serverName, parsed.toolName, Boolean(parsed.disabled))
-        invalidateMcp()
-        return {
-          serverName: parsed.serverName,
-          toolName: parsed.toolName,
-          disabled: Boolean(parsed.disabled),
-          disabledTools: [...disabledToolsOf(parsed.serverName)],
-        }
-      }, true),
-    },
-    {
-      kind: 'exact',
       path: `${API_PREFIX}/mcp/preview`,
       handler: handle('POST', async (req) => {
-        // 快速迁移预览：粘贴的 mcpServers JSON → 解析 + 转 dsh-mcp-client YAML patch
         const parsed = JSON.parse((await readBody(req)) || '{}') as { json?: string }
         if (typeof parsed.json !== 'string' || parsed.json.trim().length === 0) throw new Error('json is required')
         const { servers, errors, warnings } = parseMcpServersJson(parsed.json)
@@ -787,7 +559,6 @@ export function makeRoutes(
       kind: 'exact',
       path: `${API_PREFIX}/mcp/add`,
       handler: handle('POST', async (req) => {
-        // 快速迁移添加：粘贴 JSON → target=global（profile patch）| project（.dsh/mcps/mcp.json）
         const parsed = JSON.parse((await readBody(req)) || '{}') as {
           json?: string
           target?: string
@@ -803,18 +574,19 @@ export function makeRoutes(
           if (result.added === 0) {
             throw new Error(`全部跳过（已存在或挂载失败）：${result.skipped.join('、') || '未知原因'}`)
           }
+          await registry.refreshNow()
           invalidateMcp()
           return { target, ...result, warnings }
         }
         // project：写入 <workspace>/.dsh/mcps/mcp.json 并重扫挂载（立即生效）
-        // 目标工作区：显式传参 > 最近进入会话的工作区（随切换更新）> resolveAgent 兜底
         let workspace = typeof parsed.workspace === 'string' && parsed.workspace.length > 0 ? parsed.workspace : undefined
-        if (!workspace) workspace = getActiveWorkspace() ?? resolveAgent(ctx, undefined)?.session?.header?.cwd
+        if (!workspace) workspace = getActiveWorkspace() ?? sessionScopeOf(undefined).workspace
         if (typeof workspace !== 'string' || workspace.length === 0) {
           throw new Error('project 目标需要 workspace（当前会话工作空间）')
         }
         const written = await writeProjectMcp(workspace, servers)
-        await remountWorkspace(ctx, workspace)
+        await remountWorkspace(ctx, workspace, policy)
+        await registry.refreshNow()
         invalidateMcp()
         return { target: 'project', ...written, workspace, added: Object.keys(servers).length, warnings }
       }, true),

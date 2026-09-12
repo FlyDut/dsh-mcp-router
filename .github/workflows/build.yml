@@ -62,11 +62,14 @@ jobs:
       - name: Verify artifacts
         run: npm run verify
 
-      - name: Selftest (catalog / preset logic)
-        run: node scripts/selftest-mcp.mjs
+      - name: Selftest (domain: exposure / preset scope / migration)
+        run: node scripts/selftest-exposure.mjs
 
-      - name: Selftest (P1 session-boundary apply chain)
-        run: node scripts/selftest-pending.mjs
+      - name: Selftest (policy store: migration / persistence / apply timing)
+        run: node scripts/selftest-policy.mjs
+
+      - name: Selftest (catalog / preset text / project mcp / conversion)
+        run: node scripts/selftest-mcp.mjs
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -75,6 +78,7 @@ jobs:
           path: |
             lib/index.js
             lib/catalog.js
+            lib/exposure.js
             lib/client.js
             lib/mcp-convert.js
             lib/types

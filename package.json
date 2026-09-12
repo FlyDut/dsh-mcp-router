@@ -1,7 +1,7 @@
 {
-  "name": "dsh-mcp-skill-panel",
-  "version": "0.5.5",
-  "description": "MCP 与技能管理面板：设置页展示 MCP 服务器与 Skill 目录，随时启停释放上下文占用；可选 AI 中间层（mcp_search/mcp_call）按需使用 MCP。",
+  "name": "dsh-mcp-panel",
+  "version": "0.6.0",
+  "description": "MCP 管理面板：每个服务器四档曝光（原生注入 / 仅名称 / 隐藏 / 关闭）+ 按 agent 预设做运行时隔离；隐藏的 MCP 由 mcp_search/mcp_call 按需调用。",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",
@@ -56,7 +56,6 @@
     "@deepseek-ai/cordis-plugin-timer": "1.1.4",
     "@deepseek-ai/dsh-scope": "0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-skill": "0.1.2-rc.1",
     "@deepseek-ai/dsh-agent": "0.1.2-rc.1",
     "@deepseek-ai/dsh-llm": "0.1.2-rc.1",
     "@deepseek-ai/dsh-system-prompt": "0.1.2-rc.1",
@@ -72,11 +71,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lilyblessing/dsh-mcp-skill-panel.git"
+    "url": "git+https://github.com/lilyblessing/dsh-mcp-panel.git"
   },
-  "homepage": "https://github.com/lilyblessing/dsh-mcp-skill-panel#readme",
+  "homepage": "https://github.com/lilyblessing/dsh-mcp-panel#readme",
   "bugs": {
-    "url": "https://github.com/lilyblessing/dsh-mcp-skill-panel/issues"
+    "url": "https://github.com/lilyblessing/dsh-mcp-panel/issues"
   },
   "keywords": [
     "dsh",
@@ -84,7 +83,6 @@
     "cordis",
     "plugin",
     "mcp",
-    "skill",
     "panel",
     "agent"
   ]

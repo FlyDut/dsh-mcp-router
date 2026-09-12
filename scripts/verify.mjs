@@ -12,9 +12,11 @@ const check = (ok, label) => {
 
 const nodeOut = join(root, 'lib', 'index.js')
 const clientOut = join(root, 'lib', 'client.js')
+const exposureOut = join(root, 'lib', 'exposure.js')
 const typesDir = join(root, 'lib', 'types')
 
 check(existsSync(nodeOut), `node bundle exists: ${nodeOut}`)
+check(existsSync(exposureOut), `domain bundle exists: ${exposureOut} (selftest-exposure.mjs depends on it)`)
 check(existsSync(clientOut), `client bundle exists: ${clientOut}`)
 check(existsSync(typesDir) && readdirSync(typesDir, { recursive: true }).some((f) => String(f).endsWith('.d.ts')), 'lib/types/*.d.ts generated (package.json types must not dangle)')
 
@@ -24,6 +26,11 @@ if (existsSync(nodeOut)) {
   check(inline === 0, `no inlined TOOL_RUNTIME_SCHEDULER (found ${inline})`)
   check(/import\s*\{[^}]*scopeOf[^}]*\}\s*from\s*"@deepseek-ai\/dsh-scope"/.test(src), 'external dsh-scope import kept')
   check(/import\s+Schema\s+from\s*"@deepseek-ai\/schemastery"/.test(src), 'external schemastery import kept')
+}
+
+if (existsSync(exposureOut)) {
+  const src = readFileSync(exposureOut, 'utf8')
+  check(!/from\s*["']@deepseek-ai\//.test(src), 'exposure bundle is dependency-free (pure domain logic)')
 }
 
 if (existsSync(clientOut)) {

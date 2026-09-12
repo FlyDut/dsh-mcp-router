@@ -1,104 +1,103 @@
 /**
- * dsh-mcp-skill-panel — Host 半区入口
+ * dsh-mcp-skill-panel — Host 半区入口（接线层）。
  *
- * 设置页「MCP 与技能管理面板」的数据与控制面：
- * - MCP 页：枚举 loader 预设子树中的 mcp-* 行 + tools.schemas(scope) 聚合工具数/token，
- *   启停 = loader entry.update({disabled})（实时生效）。
- * - Skill 页：skills.snapshot/get 枚举目录，启停 = SKILL.md frontmatter
- *   `disable-model-invocation: true` 注入/移除（watcher 实时失效 catalog）。
+ * 插件唯一职责：**决定每个 MCP 服务器对哪个会话以什么粒度可见，并在不可见时按需调用它**。
+ * 本文件只做组装与生命周期，各层职责见：
+ * - `domain/exposure.ts`  四档语义 + 预设关联隔离 + v1 迁移（纯逻辑）
+ * - `domain/policy.ts`    策略真源（意图/生效两份 + 持久化 + 启动迁移）
+ * - `domain/registry.ts`  MCP 行来源归一（loader / preset standing / 项目级）
+ * - `domain/assembly.ts`  唯一装配注入点（工具过滤 + 仅名称索引段）
+ * - `mcpcall.ts`          中间层（mcp_search / mcp_call）+ 保活回收
+ * - `collect.ts`/`routes.ts` 面板数据与 HTTP 端点
  *
- * 本文件只保留：Config / catalog 采集 / 中间层装配 / 生命周期。数据收集与路由见
- * collect.ts / routes.ts，状态持久化见 state.ts / preset.ts，控制层见 mcpcall.ts。
- *
- * Phase A 实测结论（2026-08-15，动态探针验证）：
- * - ctx.loader.entries() 枚举全部行（含嵌套预设行，id 如 include:agent-presets:mcp-cheatengine）
- * - loader.resolve() 需要完整嵌套 id；entry.update({disabled}) 实时 dispose/restart
- * - 预设树（PresetTree）write() 是 no-op → loader.update 不写盘
- * - tools.schemas(scope) 必须传 scopeOf(agent.ctx)（agent 对象/standingKey 会落回全局视图）
- * - skill 文件经 skills.get(name, {scope, cwd}).path 定位；改 frontmatter 由
- *   dsh-skill-filesystem 的 chokidar watcher 实时失效
- *
- * MCP 持久化（v0.1.1 修复，2026-08-15）：
- * 运行期禁止写 agent.cordis.yml —— dsh-agent-presets 的 ensureStanding 用
- * {mtimeMs, size} stamp 检测预设文件变化，变化时删除 standing 记录并重挂，
- * 但旧 standing 的 fiber/scope 不 dispose → 旧 mcp-client 实例的 serverName
- * 仍占用 → 新挂载全部 "already in use" → 会话创建/resume 失败（实测事故）。
- * 持久化改为：toggle 只写插件自己的状态文件（~/.dsh/dsh-mcp-skill-panel/state.json），
- * 插件 apply 时（启动早期、standing 未挂载）再物化到预设文件 —— 此时写文件安全。
+ * 两条历史铁律（实测事故得出，勿改）：
+ * 1. 运行期**禁止**写 agent preset 组合文件 —— dsh-agent-presets 用 {mtimeMs,size} stamp
+ *    检测文件变化并重挂 standing，旧实例不 dispose → serverName 全冲突、会话创建失败。
+ *    因此启停意图只写 state.json，由 `syncPresetFiles` 在启动早期（standing 未挂载）物化。
+ * 2. `tools.schemas(scope)` 必须传 scope 对象（`scopeOf(agent.ctx)` 或 agent 对象本身）；
+ *    传 agent 之外的键会落回全局视图，导致 mcp 工具「不存在」。
  */
 import Schema from '@deepseek-ai/schemastery'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Catalog, CatalogEntry } from './catalog'
 import { snapshotFromSchemas, loadCatalog, saveCatalog } from './catalog'
-import { installMcpVisibilityFilter } from './filter'
-import type { McpControlCtx, McpCallController } from './mcpcall'
+import type { McpControlCtx, McpCallController, McpAccess } from './mcpcall'
 import { createMcpCallController, installMcpControlTools } from './mcpcall'
-
-export { normalizeToolName, normalizeArguments, msgOf } from './mcpcall'
+import type { CatalogRuntime } from './runtime-types'
 import { isMcpEntry, serverNameOf, mcpEntryConfig } from './mcp-entry'
-import type { McpView, SkillsView, McpRow, SkillRow } from './shared-types'
+import type { McpView } from './shared-types'
 import { createDomainCaches, getSchemasView, resolveCollectScopeKey, type DomainCaches } from './collect'
-import { listPresetMcpRows } from './preset-mcp'
 import { makeRoutes } from './routes'
-import { readState, writeState, setStateAiOwner, clearStateAiOwner } from './state'
+import { readState, writeState, setStateAiOwner, clearStateAiOwner, stateDir } from './state'
 import { syncPresetFiles } from './preset'
-import { applyPendingMcp } from './pending'
 import { installProjectMcp, rebuildOwnersFromState } from './project-mcp'
-import { loadDisabledTools, installToolDisableFilter } from './tool-disable'
 import { messageOf } from './util'
+import { type Exposure, desiredRunning, offReason } from './domain/exposure'
+import { createPolicyStore, type PolicyChange, type PolicyStore } from './domain/policy'
+import { createRegistry, type Registry } from './domain/registry'
+import { exposureForRef, installAssembly } from './domain/assembly'
+import { agentPresetId, agentWorkspace, rememberSessionScope, sameWorkspace } from './domain/session-scope'
 
-export type { McpView, SkillsView, McpRow, SkillRow } from './shared-types'
+// mcp_call 参数/错误归一化（selftest 回归护栏：双重前缀与参数双编码缺陷）
+export { normalizeToolName, normalizeArguments, msgOf } from './mcpcall'
+export type { McpView, McpRow } from './shared-types'
 export type { DomainCaches } from './collect'
+export type { CatalogRuntime } from './runtime-types'
+export type { Exposure, PresetScope, ServerPolicy } from './domain/exposure'
+export type { ServerRef } from './domain/registry'
+export type { PolicyRow } from './domain/policy'
+// 策略层工厂（selftest-policy.mjs 用最小 ctx 桩直接验证迁移/持久化/生效时机）
+export { createPolicyStore } from './domain/policy'
 // schemas 视图合并 + 状态徽标判定（selftest 回归护栏）
 export { mergeSchemas, computeStatus } from './collect'
 // 预设文件文本操作（selftest 回归护栏 + 潜在外部复用）
-export { setRowFlag, setSkillFlag, rowDisabledState, syncPresetFiles, isValidSkillName, buildSkillMd } from './preset'
+export { setRowFlag, rowDisabledState, syncPresetFiles } from './preset'
 // 项目 MCP 扫描（selftest 回归护栏：根目录先读、子目录覆盖的去重规则）
 export { scanWorkspaceMcp } from './project-mcp'
 // 项目 MCP 运行时装配（外部复用/端到端验证：手动安装、按工作空间重扫、owner 查询）
 export { installProjectMcp, remountWorkspace, projectServerOwner, projectServerName } from './project-mcp'
 export { readState, writeState } from './state'
-// P1 会话边界：待生效队列与边界应用入口（selftest 直接测构建产物行为）
-export { applyPendingMcp, pendingMcp, pendingMcpCount, type PendingMcpEntry } from './pending'
-// 工具级禁用作用域（selftest 回归护栏：全局 vs 项目工作区隔离）
-export { loadDisabledTools, setToolDisabled, isToolDisabled, disabledToolsOf } from './tool-disable'
 // rc.1 standing 组合 preset 行解析（selftest 回归护栏：parsePresetMcpText 文本抽取 + mcp-anki 例外）
-export { parsePresetMcpText } from './preset-mcp'
+export { parsePresetMcpText, firstMatchServerName } from './preset-mcp'
+// 领域纯逻辑再导出（端到端验证与外部复用；独立构建入口见 lib/exposure.js）
+export { decideExposure, desiredRunning, presetAllows, isExposure } from './domain/exposure'
 
-export const name = 'runtime-inventory'
+export const name = 'mcp-panel'
 
-export const inject = ['fs', 'skills', 'tools', 'agents', 'agentPresets', 'loader', 'systemPrompt', 'timer']
+export const inject = ['tools', 'agents', 'agentPresets', 'loader', 'systemPrompt', 'timer']
 
 export interface Config {
-  /**
-   * 形态 2（中间层代理）：停用的 MCP 对模型隐藏、经 mcp_search/mcp_call 按需调用；
-   * 用户打开的 MCP 保持模型可见。默认 false（现状，纯面板）。
-   */
-  autoManage?: boolean
   /** 保活回收窗口（ms）。默认 30_000。 */
   keepAliveMs?: number
   /** mcp_search 缺省 top-K。默认 5。 */
   searchLimitDefault?: number
   /** mcp_search top-K 上限。默认 10。 */
   searchLimitMax?: number
-  /** 能力摘要表（mcp_search 空查询时返回）。 */
+  /** 能力摘要表（name-only 索引段与 mcp_search 摘要用）。 */
   serverSummary?: Record<string, string>
+  /** 未配置过的 MCP 服务器使用的默认档位。默认 native（DSH 原生行为）。 */
+  defaultExposure?: Exposure
+  /** 是否注册中间层工具（mcp_search / mcp_call）。默认 true。 */
+  middleLayer?: boolean
 }
 
 export const Config: Schema<Config> = Schema.object({
-  autoManage: Schema.boolean().description('MCP 中间层控制（停用的 MCP 经 mcp_search/mcp_call 按需调用）').default(false),
   keepAliveMs: Schema.number().min(1000).description('MCP 保活空闲回收窗口（ms）').default(30_000),
   searchLimitDefault: Schema.number().min(1).description('mcp_search 缺省 top-K').default(5),
   searchLimitMax: Schema.number().min(1).description('mcp_search top-K 上限').default(10),
   serverSummary: Schema.dict(Schema.string()).description('MCP 能力摘要表（serverName → 一句话）'),
+  defaultExposure: Schema.union(['native', 'name-only', 'hidden', 'off'])
+    .description('未配置 MCP 的默认档位')
+    .default('native'),
+  middleLayer: Schema.boolean().description('注册 mcp_search / mcp_call 中间层工具').default(true),
 })
 
-/** 私有 catalog 持久化目录（与 state.ts 同目录 ~/.dsh/dsh-mcp-skill-panel）。 */
-const CATALOG_DIR = join(homedir(), '.dsh', 'dsh-mcp-skill-panel')
+/** 私有 catalog / state 持久化目录。 */
+const CATALOG_DIR = join(stateDir())
 /** mcp_call 注册/调用的默认超时（读 entry config toolCallTimeoutMs，缺省回退）。 */
 const DEFAULT_TOOL_TIMEOUT_MS = 60_000
 /** tools/change 后增量快照的去抖窗口。 */
@@ -106,43 +105,7 @@ const CATALOG_SNAPSHOT_DEBOUNCE_MS = 150
 /** catalog 持久化写盘防抖（P1-3）：tools/change 风暴期合并写盘。 */
 const CATALOG_PERSIST_DEBOUNCE_MS = 300
 
-/** part=all（缺省）时的完整响应 */
-export type RuntimeState = McpView & SkillsView
-
 /* ── catalog 采集（P1） ───────────────────────────────────────────────── */
-
-/** 私有 catalog 内存态 + 持久化。 */
-export interface CatalogRuntime {
-  catalog: Catalog
-  dirty: boolean
-  persisting: boolean
-  /** 磁盘加载是否已完成（完成前跳过采集，防止空快照覆盖磁盘 last-good）。 */
-  loaded: boolean
-  /** AI 中间层当前生效状态（面板开关可动态切换）。 */
-  autoManage: boolean
-  /** 动态切换 AI 中间层（过滤 + mcp_search/mcp_call + 回收器）。 */
-  applyAutoManage: (on: boolean) => void
-  /** 最近一次成功写盘时间（防抖合并用）。 */
-  lastPersistAt: number | null
-  /** 防抖挂起的写盘 timer（ctx.timeout 创建，ctx 销毁自动清理）。 */
-  persistTimer: (() => void) | undefined
-  /** 停用态 token 估算缓存（P2-6）：fetchedAt 不变则复用。 */
-  tokenCache: Map<string, { fetchedAt: number; tokens: number }>
-  /** 诊断计数（debug 端点输出，定位采集链路问题用）。 */
-  diag: {
-    toolsChangeEvents: number
-    snapshots: number
-    lastError: string | null
-    lastAt: number | null
-    lastMcpTools: number | null
-    lastSchemasTotal: number | null
-    lastScope: boolean | null
-    lastAgentRoots: number | null
-    lastAgentList: number | null
-    loadedAt: number | null
-    loadedServers: number | null
-  }
-}
 
 /** 从 loader entries 反查某 serverName 对应的 mcp 行（serverName 取自 config）。 */
 function findMcpEntry(ctx: Context, serverName: string): Entry | undefined {
@@ -174,7 +137,6 @@ function sameToolList(a: CatalogEntry[], b: CatalogEntry[]): boolean {
  * 卸载自动清理）；正在写盘时置 dirty 排队（finally 补一次）。 */
 async function persistCatalog(next: () => Context, runtime: CatalogRuntime): Promise<void> {
   if (runtime.persisting) {
-    // 正在写盘中：置 dirty 排队（finally 会补一次），而不是丢弃本次变更。
     runtime.dirty = true
     return
   }
@@ -194,7 +156,7 @@ async function persistCatalog(next: () => Context, runtime: CatalogRuntime): Pro
     runtime.dirty = false
     runtime.lastPersistAt = Date.now()
   } catch (error) {
-    ctx.logger.warn(`mcp-skill-panel: catalog persist failed: ${messageOf(error)}`)
+    ctx.logger.warn(`mcp-panel: catalog persist failed: ${messageOf(error)}`)
   } finally {
     runtime.persisting = false
     if (runtime.dirty) void persistCatalog(next, runtime)
@@ -229,7 +191,6 @@ async function snapshotEnabled(ctx: Context, runtime: CatalogRuntime, caches: Do
   try {
     const next = { ...runtime.catalog }
     let changed = false
-    // 诊断：记录 apply ctx 下 agents/standing 的解析现场
     let rootsCount = 0
     let listCount = 0
     try {
@@ -261,16 +222,12 @@ async function snapshotEnabled(ctx: Context, runtime: CatalogRuntime, caches: Do
       }
       const prev = next[serverName]
       if (prev && prev.source === 'live' && sameToolList(prev.tools, tools)) continue
-      // last-good（v0.4.6 加强）：空采集（tools 为空）一律不写盘 —— 无论 prev 是否存在。
-      // 原守卫只在 prev 有数据时保留，但 prev 因外部清空/时序丢失后，空快照会续写污染
-      // last-good（0.4.5 实测：某次快照 loader 视图为空 → prune 清空 → 空快照续写）。
+      // last-good（v0.4.6 加强）：空采集一律不写盘，避免污染磁盘快照。
       if (tools.length === 0) continue
       next[serverName] = { tools, fetchedAt: Date.now(), source: 'live' }
       changed = true
     }
-    // 失效清理（v0.4.5 → v0.4.6 修复）：
-    // 保护：loader 视图为空（组合未挂载 / 启动时序 / realm 隔离异常）时跳过 prune，
-    // 绝不删除 last-good —— 0.4.5 曾因 alive 集合为空把 catalog 全部清空并写盘。
+    // 失效清理：loader 视图为空时跳过 prune，绝不删除 last-good。
     const alive = new Set<string>()
     for (const entry of ctx.loader.entries()) {
       if (!isMcpEntry(entry)) continue
@@ -297,86 +254,13 @@ async function snapshotEnabled(ctx: Context, runtime: CatalogRuntime, caches: Do
   }
 }
 
-/** 构建控制层依赖（McpControlCtx）：封闭 catalog/loader/state 的 IO。 */
-function buildMcpControl(ctx: Context, runtime: CatalogRuntime, config: Config, caches: DomainCaches): McpControlCtx {
-  // 默认值与 Config schema 的 .default() 一致：schema 生效后 config 必有值，
-  // ?? 是「config 未经 schema 直接传入」时的防御性兜底（P2-10 收敛说明）。
-  // preset 超时缓存（presetId+serverName → 超时/ms，有效 60s）：inventory+resolve+read
-  // 每次 mcp_call 都做太重，key 含 presetId（切 preset 即换 key，天然失效）。
-  const presetTimeoutCache = new Map<string, { at: number; timeout: number | undefined }>()
+/** 空 catalog 运行时（启动早期）。 */
+function createCatalogRuntime(): CatalogRuntime {
   return {
-    keepAliveMs: config.keepAliveMs ?? 30_000,
-    searchLimitDefault: config.searchLimitDefault ?? 5,
-    searchLimitMax: config.searchLimitMax ?? 10,
-    serverSummary: config.serverSummary ?? {},
-    getCatalog: () => runtime.catalog,
-    setCatalog: (catalog) => {
-      runtime.catalog = catalog
-    },
-    persistCatalog: () => persistCatalog(() => ctx, runtime),
-    resolveEntry: (serverName) => findMcpEntry(ctx, serverName),
-    serverTimeoutMs: (serverName) => serverTimeoutMs(ctx, serverName),
-    presetTimeoutMs: async (serverName) => {
-      // rc.1 standing 组合兜底（窄场景）：仅 loader 有行但缺 toolCallTimeoutMs 时补读；
-      // loader 无行的 mcp_call 预设行仍返回「不在 loader 中」（预设行直通是后续修复）。
-      try {
-        const agent = ctx.agents.roots()[0] ?? ctx.agents.list()[0]
-        const presetId = agent ? (ctx.agentPresets.composedPreset(agent.ctx) ?? null) : null
-        if (!presetId) return undefined
-        const key = `${presetId}\0${serverName}`
-        const hit = presetTimeoutCache.get(key)
-        if (hit && Date.now() - hit.at < 60_000) return hit.timeout
-        const { rows } = await listPresetMcpRows(ctx, presetId)
-        const timeout = rows.find((r) => r.serverName === serverName)?.toolCallTimeoutMs
-        presetTimeoutCache.set(key, { at: Date.now(), timeout })
-        return timeout
-      } catch {
-        return undefined
-      }
-    },
-    setAiOwner: (entryId, at) => setStateAiOwner(entryId, at),
-    clearAiOwner: (entryId) => clearStateAiOwner(entryId),
-    snapshotEnabled: () => snapshotEnabled(ctx, runtime, caches),
-  }
-}
-
-/* ── 插件主体 ──────────────────────────────────────────────────────────── */
-
-export function apply(ctx: Context, config: Config = {}): void {
-  // 启动早期加载 MCP 工具级禁用集合（memory Map，装配过滤同步读）。
-  // 注意：加载是异步的，首个装配回合前禁用表可能未就绪（毫秒级窗口）；
-  // 失败必须留日志（否则用户以为已禁用、实际全放行）。
-  void loadDisabledTools().catch((error: unknown) => {
-    ctx.logger.warn(`mcp-skill-panel: 加载工具级禁用表失败: ${messageOf(error)}`)
-  })
-
-  // HMR/热重载兜底：从 state.json 反向重建项目 MCP owner 映射（防项目工具
-  // 在下次 session-start 前短暂按全局展示/禁用作用域错判）。
-  void rebuildOwnersFromState(ctx).catch((error: unknown) => {
-    ctx.logger.warn(`mcp-skill-panel: 重建项目 MCP owner 映射失败: ${messageOf(error)}`)
-  })
-
-  // 启动早期物化 MCP 启停意图（仅当无会话在跑时；有会话则下次重启再物化）。
-  // 不阻塞 apply；失败只记日志，不拖累插件挂载。
-  void syncPresetFiles(ctx).then(
-    (count) => {
-      if (count > 0) ctx.logger.info(`runtime-inventory: materialized ${count} MCP row state(s) into preset composition`)
-    },
-    (error: unknown) => {
-      ctx.logger.warn(`runtime-inventory: preset sync skipped: ${messageOf(error)}`)
-    },
-  )
-
-  // 私有 catalog 内存态（面板联动 + 中间层共用）：采集对两种模式都启用（只读、
-  // 无模型影响），autoManage=false 时仅面板停用态显示目录工具数。
-  const catalogRuntime: CatalogRuntime = {
     catalog: {},
     dirty: false,
     persisting: false,
     loaded: false,
-    // 初始值由下方 applyAutoManage 赋值（control/controller 构建后）
-    autoManage: false,
-    applyAutoManage: () => {},
     lastPersistAt: null,
     persistTimer: undefined,
     tokenCache: new Map(),
@@ -394,7 +278,42 @@ export function apply(ctx: Context, config: Config = {}): void {
       loadedServers: null,
     },
   }
-  // 启动早期加载持久化 catalog（last-good 兜底）；失败置空不阻塞。
+}
+
+/* ── 插件主体 ──────────────────────────────────────────────────────────── */
+
+export function apply(ctx: Context, config: Config = {}): void {
+  const caches = createDomainCaches()
+  const catalogRuntime = createCatalogRuntime()
+  const fallbackExposure: Exposure = config.defaultExposure ?? 'native'
+
+  // 注册表：三种来源归一（loader 行同步、preset standing 行异步刷新）
+  const registry: Registry = createRegistry(ctx, () => caches.invalidateMcp())
+  ctx.effect(() => registry.install(), 'mcp-panel: registry events')
+
+  // 策略层：意图/生效两份表 + state.json 持久化 + 启动迁移。
+  // onEffectiveChanged：immediate 模式下把「期望运行」同步到 loader（预设行只能等重启物化）。
+  const policy: PolicyStore = createPolicyStore({
+    ctx,
+    fallbackExposure,
+    onEffectiveChanged: (changes) => applyProcessState(ctx, registry, changes, () => controllerRef),
+  })
+
+  // 中间层控制层（catalog/loader/state 的 IO 封装）。controller 在控制层之后创建，
+  // 用可变引用打通「控制层查询 AI 保活窗口 → 控制器状态」的回路。
+  let controllerRef: McpCallController | undefined
+  const control: McpControlCtx = buildMcpControl(ctx, catalogRuntime, config, caches, registry, policy, (serverName) =>
+    controllerRef?.isAiEnabled(serverName) ?? false,
+  )
+  const controller: McpCallController = createMcpCallController(ctx, control)
+  controllerRef = controller
+
+  // 启动早期：重建项目 MCP owner 映射（HMR/热重载后内存表清空）
+  void rebuildOwnersFromState(ctx).catch((error: unknown) => {
+    ctx.logger.warn(`mcp-panel: 重建项目 MCP owner 映射失败: ${messageOf(error)}`)
+  })
+
+  // 启动早期：加载持久化 catalog（last-good 兜底）；失败置空不阻塞。
   void loadCatalog(CATALOG_DIR).then(
     (catalog) => {
       catalogRuntime.catalog = catalog
@@ -410,150 +329,238 @@ export function apply(ctx: Context, config: Config = {}): void {
     },
   )
 
-  // 分域缓存 + 事件驱动失效。事件在 root ctx emit（tools/change 来自工具注册表、
-  // skills/change 来自 skill registry），必须挂 root 监听才能收到；用 ctx.effect
-  // 确保插件卸载时解除监听（root 上的监听不随 fiber 自动清理）。
-  const caches = createDomainCaches()
-  ctx.effect(
-    () => {
-      const offTools = ctx.root.on('tools/change', caches.invalidateMcp)
-      const offLoader = ctx.root.on('loader/partial-dispose', caches.invalidateMcp)
-      const offSkills = ctx.root.on('skills/change', caches.invalidateSkills)
-      return () => {
-        offTools()
-        offLoader()
-        offSkills()
-      }
-    },
-    'runtime-inventory: cache invalidation',
-  )
-
-  // tools/change 增量采集：对 enabled server 重新快照（含 mcp_call 临时启用后）。
-  ctx.effect(() => {
-    let scheduled = false
-    const off = ctx.root.on(
-      'tools/change',
-      () => {
-        catalogRuntime.diag.toolsChangeEvents += 1
-        if (scheduled) return
-        scheduled = true
-        ctx.timeout(() => {
-          scheduled = false
-          void snapshotEnabled(ctx, catalogRuntime, caches)
-        }, CATALOG_SNAPSHOT_DEBOUNCE_MS)
-      },
-    )
-    return off
-  }, 'mcp-skill-panel: catalog snapshot')
-
-  // 初始快照（可能还没有 agent，mcp__* 会在后续增量补全）。
-  void snapshotEnabled(ctx, catalogRuntime, caches).catch(() => {})
-
-  // ── 项目级（工作空间）MCP：.dsh/mcps/**/mcp.json → 惰性挂载 + 常开可见性过滤 ──
-  // 仅该项目会话可见（过滤按会话 cwd），独立于 autoManage；插件卸载时整体释放。
-  const disposeProjectMcp = installProjectMcp(ctx)
-  ctx.effect(
-    () => () => disposeProjectMcp(),
-    'mcp-skill-panel: project mcp teardown',
-  )
-
-  // ── 工具级禁用过滤（常开）：用户禁用的 MCP 工具从模型目录剔除 ──
-  const disposeToolFilter = installToolDisableFilter(ctx)
-  ctx.effect(
-    () => () => disposeToolFilter(),
-    'mcp-skill-panel: tool disable teardown',
-  )
-
-  // ── 形态 2（中间层代理）：动态开关 ──────────────────────────────────────
-  // 控制层（catalog/loader/state 的 IO 封装）常驻构建，零副作用；过滤 + 工具 +
-  // 回收器按 autoManage 开关动态挂载/卸载（面板 /config 端点可切换，state.json
-  // 持久化，config 仅作初始默认）。
-  const control: McpControlCtx = buildMcpControl(ctx, catalogRuntime, config, caches)
-  const controller = createMcpCallController(ctx, control)
-  // 装配可见性（v0.4.2+）：每回合构建一次 server → 可见性 Map（单次 loader 遍历），
-  // 过滤时 O(1) 查表。用户打开的 server 可见（disabled=false 且非 AI 临时启用）；
-  // 停用或 AI 临时启用的 server 对模型过滤，经 mcp_search/mcp_call 按需调用。
-  const buildVisibility = (): ReadonlyMap<string, boolean> => {
-    const map = new Map<string, boolean>()
-    for (const entry of ctx.loader.entries()) {
-      if (!isMcpEntry(entry)) continue
-      const serverName = serverNameOf(entry)
-      map.set(serverName, !entry.disabled && !controller.isAiEnabled(serverName))
-    }
-    return map
-  }
-  let autoDisposers: Array<() => void> = []
-  catalogRuntime.applyAutoManage = (on: boolean) => {
-    for (const d of autoDisposers) d()
-    autoDisposers = []
-    catalogRuntime.autoManage = on
-    if (!on) return
-    const disposers: Array<() => void> = []
+  // 启动序列（不阻塞 apply）：注册表快照 → 策略加载（含 v1 迁移）→ 预设文件物化 → 复扫
+  void (async () => {
+    await registry.refreshNow()
+    await policy.load()
     try {
-      disposers.push(installMcpVisibilityFilter(ctx, buildVisibility))
-      disposers.push(installMcpControlTools(ctx, control, controller))
-      const offReaper = controller.startIdleReaper()
-      disposers.push(() => offReaper())
+      const count = await syncPresetFiles({ ctx, registry, policy })
+      if (count > 0) ctx.logger.info(`mcp-panel: materialized ${count} MCP row state(s) into preset composition`)
     } catch (error) {
-      for (const d of disposers) d()
-      catalogRuntime.autoManage = false
-      ctx.logger.warn(`mcp-skill-panel: autoManage enable failed: ${messageOf(error)}`)
-      return
+      ctx.logger.warn(`mcp-panel: preset sync skipped: ${messageOf(error)}`)
     }
-    autoDisposers = disposers
-  }
-  // 插件卸载兜底：释放当前挂载的中间层（effect disposer 手动调用后 fiber 卸载不再重复）。
-  ctx.effect(
-    () => () => {
-      for (const d of autoDisposers) d()
-    },
-    'mcp-skill-panel: autoManage teardown',
-  )
-  // 初始：config 默认 → state.json 的面板值覆盖（异步，立即生效）。
-  catalogRuntime.applyAutoManage(Boolean(config.autoManage))
-  void readState().then((state) => {
-    if (typeof state.config?.autoManage === 'boolean' && state.config.autoManage !== Boolean(config.autoManage)) {
-      catalogRuntime.applyAutoManage(state.config.autoManage)
-      ctx.logger.info(`mcp-skill-panel: autoManage = ${state.config.autoManage} (from panel state)`)
-    }
+    await registry.refreshNow()
+  })().catch((error: unknown) => {
+    ctx.logger.warn(`mcp-panel: startup sequence failed: ${messageOf(error)}`)
   })
 
-  // P1 会话边界生效（v0.5.0）：next-session 模式下，新会话首次请求前应用待生效队列。
-  // agent/session-start 是 Scoped<Agent> 的 emit，root 监听可收到；应用失败保留队列，
-  // 由下次边界或「立即应用」端点重试。entry.update 触发 tools/change → 新会话前缀自建
-  // （无缓存可破坏）。immediate 模式不产生待办，此监听零副作用。
+  // 装配层（常开）：唯一注入点 = 工具过滤 + 仅名称索引段
+  const disposeAssembly = installAssembly(ctx, {
+    registry,
+    policy,
+    isAiActive: (serverName) => controller.isAiEnabled(serverName),
+    summaryOf: (serverName) => summaryOf(serverName, config, catalogRuntime),
+  })
+  ctx.effect(() => disposeAssembly, 'mcp-panel: assembly teardown')
+
+  // 项目级（工作空间）MCP：.dsh/mcps/**/mcp.json → 惰性挂载（可见性由装配层按档位+工作区统一判定）
+  const disposeProjectMcp = installProjectMcp(ctx, policy)
+  ctx.effect(() => disposeProjectMcp, 'mcp-panel: project mcp teardown')
+
+  // 中间层工具（mcp_search / mcp_call）+ 空闲回收器
+  if (config.middleLayer !== false) {
+    const disposeTools = installMcpControlTools(ctx, control, controller)
+    const offReaper = controller.startIdleReaper()
+    ctx.effect(
+      () => () => {
+        offReaper()
+        disposeTools()
+      },
+      'mcp-panel: middle layer teardown',
+    )
+  }
+
+  // 失效订阅：工具注册表变化 → 面板缓存失效 + 注册表/目录快照刷新
   ctx.effect(() => {
-    let guard = false
-    const off = ctx.root.on(
-      'agent/session-start',
-      () => {
+    let scheduled = false
+    const invalidate = () => caches.invalidateMcp()
+    const offTools = ctx.root.on('tools/change', () => {
+      catalogRuntime.diag.toolsChangeEvents += 1
+      invalidate()
+      void registry.refresh()
+      if (scheduled) return
+      scheduled = true
+      ctx.timeout(() => {
+        scheduled = false
+        void snapshotEnabled(ctx, catalogRuntime, caches)
+      }, CATALOG_SNAPSHOT_DEBOUNCE_MS)
+    })
+    const offLoader = ctx.root.on('loader/partial-dispose', () => {
+      invalidate()
+      void registry.refresh()
+    })
+    return () => {
+      offTools()
+      offLoader()
+    }
+  }, 'mcp-panel: catalog snapshot + registry refresh')
+
+  // 初始快照（可能还没有 agent，mcp__* 会在后续增量补全）
+  void snapshotEnabled(ctx, catalogRuntime, caches).catch(() => {})
+
+  // 会话边界：next-session 模式的待生效意图在此提升为生效
+  ctx.effect(
+    () => {
+      let guard = false
+      const off = ctx.root.on('agent/session-start', (payload: { agent?: unknown }) => {
+        // 记录最近会话作用域：HTTP 面板路径下 agents 视图可能受限，用作展示兜底
+        rememberSessionScope(agentPresetId(ctx, payload?.agent), agentWorkspace(payload?.agent))
         if (guard) return
         guard = true
-        void applyPendingMcp({ ctx, controller })
-          .then((count) => {
-            if (count > 0) {
-              caches.invalidateMcp()
-              ctx.logger.info(`runtime-inventory: applied ${count} pending MCP change(s) at session boundary`)
-            }
-          })
+        void (async () => {
+          const applied = await policy.commitPending()
+          await registry.refreshNow()
+          if (applied > 0) {
+            caches.invalidateMcp()
+            ctx.logger.info(`mcp-panel: applied ${applied} pending MCP change(s) at session boundary`)
+          }
+        })()
           .catch((error: unknown) => {
-            ctx.logger.warn(`runtime-inventory: session-boundary apply failed: ${messageOf(error)}`)
+            ctx.logger.warn(`mcp-panel: session-boundary apply failed: ${messageOf(error)}`)
           })
           .finally(() => {
             guard = false
           })
-      },
-    )
-    return off
-  }, 'runtime-inventory: session-boundary apply')
+      })
+      return off
+    },
+    'mcp-panel: session-boundary apply',
+  )
 
   ctx.inject(['webServer'], (httpCtx) => {
     httpCtx.effect(() => {
-      const routes = makeRoutes(httpCtx, caches, catalogRuntime, config, controller, () => snapshotEnabled(httpCtx, catalogRuntime, caches))
+      const routes = makeRoutes({
+        ctx: httpCtx,
+        hostCtx: ctx,
+        caches,
+        catalogRuntime,
+        config,
+        controller,
+        registry,
+        policy,
+        triggerSnapshot: () => snapshotEnabled(httpCtx, catalogRuntime, caches),
+      })
       const disposers = routes.map((route) => httpCtx.webServer.register(route))
       return () => {
         for (const dispose of disposers) dispose()
       }
-    }, 'runtime-inventory: routes')
+    }, 'mcp-panel: routes')
   })
+}
+
+/** 控制层依赖（McpControlCtx）：封闭 catalog/loader/state/registry/policy 的 IO。 */
+function buildMcpControl(
+  ctx: Context,
+  runtime: CatalogRuntime,
+  config: Config,
+  caches: DomainCaches,
+  registry: Registry,
+  policy: PolicyStore,
+  isAiActive: (serverName: string) => boolean,
+): McpControlCtx {
+  // preset 超时缓存（presetId+serverName → 超时/ms，有效 60s）：inventory+resolve+read
+  // 每次 mcp_call 都做太重，key 含 presetId（切 preset 即换 key，天然失效）。
+  const presetTimeoutCache = new Map<string, { at: number; timeout: number | undefined }>()
+  const assemblyDeps = {
+    ctxForPreset: ctx,
+    registry,
+    policy,
+    isAiActive,
+    summaryOf: () => undefined,
+  }
+  const accessFor = (serverName: string, presetId: string | undefined, workspace: string | undefined): McpAccess => {
+    const ref = registry.refFor(serverName, presetId)
+    const effectivePolicy = policy.effective(serverName, ref?.workspace)
+    if (!ref) return { effective: 'off', policy: effectivePolicy, presetId, blockedBy: 'unknown' }
+    const effective = exposureForRef(assemblyDeps, ref, presetId, workspace)
+    const workspaceMismatch = ref.workspace !== undefined && !sameWorkspace(ref.workspace, workspace)
+    const blockedBy = effective === 'off' ? offReason(effectivePolicy, presetId, workspaceMismatch) : 'none'
+    return { effective, policy: effectivePolicy, ref, presetId, blockedBy }
+  }
+  const accessOf = (serverName: string, agent: Agent | undefined): McpAccess =>
+    accessFor(serverName, agentPresetId(ctx, agent), agentWorkspace(agent))
+  return {
+    keepAliveMs: config.keepAliveMs ?? 30_000,
+    searchLimitDefault: config.searchLimitDefault ?? 5,
+    searchLimitMax: config.searchLimitMax ?? 10,
+    serverSummary: config.serverSummary ?? {},
+    getCatalog: () => runtime.catalog,
+    setCatalog: (catalog) => {
+      runtime.catalog = catalog
+    },
+    persistCatalog: () => persistCatalog(() => ctx, runtime),
+    resolveEntry: (serverName) => findMcpEntry(ctx, serverName),
+    accessOf,
+    accessFor,
+    presetIdOf: (agent) => agentPresetId(ctx, agent),
+    serverTimeoutMs: (serverName) => serverTimeoutMs(ctx, serverName),
+    presetTimeoutMs: async (serverName) => {
+      // rc.1 standing 组合兜底（窄场景）：仅 loader 有行但缺 toolCallTimeoutMs 时补读
+      try {
+        const ref = registry.refFor(serverName, undefined)
+        if (ref?.toolCallTimeoutMs !== undefined) return ref.toolCallTimeoutMs
+        const agent = ctx.agents.roots()[0] ?? ctx.agents.list()[0]
+        const presetId = agent ? (ctx.agentPresets.composedPreset(agent.ctx) ?? null) : null
+        if (!presetId) return undefined
+        const key = `${presetId}\0${serverName}`
+        const hit = presetTimeoutCache.get(key)
+        if (hit && Date.now() - hit.at < 60_000) return hit.timeout
+        const { listPresetMcpRows } = await import('./preset-mcp')
+        const { rows } = await listPresetMcpRows(ctx, presetId)
+        const timeout = rows.find((r) => r.serverName === serverName)?.toolCallTimeoutMs
+        presetTimeoutCache.set(key, { at: Date.now(), timeout })
+        return timeout
+      } catch {
+        return undefined
+      }
+    },
+    setAiOwner: (entryId, at) => setStateAiOwner(entryId, at),
+    clearAiOwner: (entryId) => clearStateAiOwner(entryId),
+    snapshotEnabled: () => snapshotEnabled(ctx, runtime, caches),
+  }
+}
+
+/** 该 server 的一句话摘要（config 覆盖 > catalog 首条描述）。 */
+function summaryOf(serverName: string, config: Config, runtime: CatalogRuntime): string | undefined {
+  const configured = config.serverSummary?.[serverName]
+  if (typeof configured === 'string' && configured.length > 0) return configured
+  const first = runtime.catalog[serverName]?.tools?.[0]
+  const raw = first ? String(first.description ?? '') : ''
+  return raw.length > 0 ? raw : undefined
+}
+
+/**
+ * 生效策略变化 → 调整 loader 进程状态（`desiredRunning`）。
+ *
+ * 只对 loader 行即时生效（entry.update）。预设组合行不在 loader 中，其进程状态由
+ * 启动早期 `syncPresetFiles` 物化到组合文件后随重启生效 —— 运行期改文件会触发
+ * dsh-agent-presets 的 standing 重挂事故（见文件头铁律 1）。运行期对预设行的
+ * 「不可见/不可调用」由装配层与中间层即时保证，与进程状态无关。
+ */
+async function applyProcessState(
+  ctx: Context,
+  registry: Registry,
+  changes: PolicyChange[],
+  controller: () => McpCallController | undefined,
+): Promise<void> {
+  for (const change of changes) {
+    const want = desiredRunning(change.policy.exposure)
+    // 用户把档位切到「需要运行」的两档 = 用户接管该 server：清除 AI 保活标记，
+    // 回收器不再回收它，且装配不再因 aiActive 把它降级为 hidden。
+    if (want) controller()?.markUserEnabled(change.serverName)
+    const ref = registry.refFor(change.serverName, undefined)
+    if (!ref) continue
+    const wantDisabled = !want
+    try {
+      // preset standing 行不在 loader 中（resolve 会抛错）：忽略即可，其进程状态
+      // 由下次启动的物化决定；可见性与可调用性不受影响（装配/中间层即时判定）。
+      const entry = ctx.loader.resolve(ref.entryId)
+      if (!entry || !isMcpEntry(entry)) continue
+      if (Boolean(entry.disabled) === wantDisabled) continue
+      await entry.update({ disabled: wantDisabled })
+      ctx.logger.info?.(`mcp-panel: ${change.serverName} → ${want ? 'enabled' : 'disabled'} (exposure=${change.policy.exposure})`)
+    } catch (error) {
+      ctx.logger.debug?.(`mcp-panel: process state for "${change.serverName}" not applied (${messageOf(error)})`)
+    }
+  }
 }

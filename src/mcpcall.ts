@@ -1,17 +1,22 @@
 /**
- * MCP 中间层控制层（P2）：保活启用 → 等注册 → 插件内执行 → 空闲回收。
+ * MCP 中间层：模型面恒定 2 个工具 + 控制层。
  *
- * 模型面恒定 2 个工具：
- *   mcp_search —— 检索私有 catalog（能力摘要 / 列表 / top-K 全文检索）
- *   mcp_call   —— 保活启用指定 server → 执行工具 → 返回文本结果
+ * 模型面：
+ *   mcp_search —— 检索私有 catalog（索引 / 列表 / top-K 全文检索），
+ *                 结果按当前会话的曝光档位与预设关联过滤
+ *   mcp_call   —— 按需启用指定 server → 执行工具 → 返回文本结果；
+ *                 工具名未知时直接返回该 server 的工具清单
  *
  * 控制层职责：
- * - ensureEnabled：从 loader entries 反查 entry，disabled 时 update 开启并记录
+ * - ensureEnabled：从注册表反查 loader entry，disabled 时 update 开启并记录
  *   AI owner（写 state.json 的 ai 段）。
  * - waitRegistered：轮询 ctx.tools.get + tools/change 事件加速。
- * - call：enable → waitRegistered → ctx.tools.execute。失败时若本次 AI 启用且
- *   无并发则恢复 disabled 并清 owner。
+ * - call：访问判定 → enable → waitRegistered → ctx.tools.execute。失败时若本次
+ *   AI 启用且无并发则恢复 disabled 并清 owner。
  * - 引用计数（Map<serverName, number>）+ 空闲回收器（ctx.interval 每 10s 扫描）。
+ *
+ * 可用性判定（曝光档位 + 预设隔离 + 工具级禁用）经 `McpControlCtx.accessOf` 注入，
+ * 与装配层共用同一套策略真源（`domain/policy.ts`）。
  */
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
@@ -21,8 +26,27 @@ import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { Catalog, SearchHit } from './catalog'
-import { searchCatalog, listServer } from './catalog'
-import { isToolDisabled } from './tool-disable'
+import { searchCatalog, listServer, serverOfMcp } from './catalog'
+import type { Exposure, ServerPolicy } from './domain/exposure'
+import { listedInSummary, policyDisablesTool } from './domain/exposure'
+import type { ServerRef } from './domain/registry'
+
+/**
+ * 某一 server 对当前会话的访问判定结果。
+ * `effective` 与装配层同源（`decideExposure`），保证「模型看到的」与「能调用的」一致。
+ */
+export interface McpAccess {
+  /** 有效曝光；`off` = 不可见且不可调用。 */
+  effective: Exposure
+  /** 生效策略（工具级禁用 + 预设关联文案用）。 */
+  policy: ServerPolicy
+  /** 注册表引用（未知 server 时为 undefined）。 */
+  ref?: ServerRef
+  /** 当前会话的 preset id（错误文案用）。 */
+  presetId?: string
+  /** `off` 的成因：预设隔离 / 档位关闭 / 工作区不符 / 未知 server。 */
+  blockedBy: 'none' | 'preset' | 'exposure' | 'workspace' | 'unknown'
+}
 
 /** 空闲回收器扫描周期（ms）。 */
 const REAPER_INTERVAL_MS = 10_000
@@ -114,6 +138,15 @@ export interface McpControlCtx {
 
   /** 按 serverName 反查 loader entry；无则 undefined。 */
   resolveEntry(serverName: string): Entry | undefined
+  /**
+   * 访问判定：该 server 对给定 agent 的有效曝光 + 成因（与装配层同源）。
+   * agent 缺省（无会话上下文）时按「无预设、无工作区」判定。
+   */
+  accessOf(serverName: string, agent: Agent | undefined): McpAccess
+  /** 同上，但直接给 presetId / workspace（面板按会话参数查询用）。 */
+  accessFor(serverName: string, presetId: string | undefined, workspace: string | undefined): McpAccess
+  /** 当前 agent 运行的 preset id（错误文案与诊断用）。 */
+  presetIdOf(agent: Agent | undefined): string | undefined
   /** server 自己的注册/调用超时（读 entry config 的 toolCallTimeoutMs，缺省回退）。 */
   serverTimeoutMs(serverName: string): number
 
@@ -141,6 +174,8 @@ interface ControllerState {
 }
 
 export interface McpCallController {
+  /** 访问判定（面板/诊断用；与装配层同源）。 */
+  accessFor(serverName: string, presetId: string | undefined, workspace: string | undefined): McpAccess
   /** 保活启用：disabled 时开启并记录 AI owner。返回本次是否由 AI 开启。 */
   ensureEnabled(serverName: string): Promise<boolean>
   /** 该 server 当前是否由 AI 临时启用（mcp_call 保活中）——装配过滤据此保持其不可见。 */
@@ -228,7 +263,7 @@ async function ensureEnabled(
     await entry.update({ disabled: false })
     state.aiEnabled.add(serverName)
     await control.setAiOwner(entryId, Date.now())
-    ctx.logger.info?.(`mcp-skill-panel: AI enabled MCP server "${serverName}"`)
+    ctx.logger.info?.(`mcp-panel: AI enabled MCP server "${serverName}"`)
   }
   return wasDisabled
 }
@@ -264,7 +299,7 @@ async function waitRegistered(
         if (!view.tools) continue
         try {
           if (Boolean(view.tools.get(name, view.scope as object | undefined))) {
-            ctx.logger.info?.(`mcp-skill-panel: tool "${name}" resolved via view "${view.label}"`)
+            ctx.logger.info?.(`mcp-panel: tool "${name}" resolved via view "${view.label}"`)
             return finish(undefined, view)
           }
         } catch {
@@ -278,7 +313,7 @@ async function waitRegistered(
     }
     offTools = ctx.root.on('tools/change', () => check())
     // 上下文销毁 → 立即终局：此前无 dispose 监听时 Promise 永不 settle，会挂起 mcp_call。
-    offDispose = ctx.effect(() => () => finish(new Error('context disposed')), 'mcp-skill-panel: waitRegistered')
+    offDispose = ctx.effect(() => () => finish(new Error('context disposed')), 'mcp-panel: waitRegistered')
     // 调用方中止（exec.signal）→ 立即终局。
     if (signal) {
       if (signal.aborted) {
@@ -315,12 +350,58 @@ async function restore(
     }
     await control.clearAiOwner(entryId)
   } catch (error) {
-    ctx.logger.warn?.(`mcp-skill-panel: restore disabled for "${serverName}" failed: ${msgOf(error)}`)
+    ctx.logger.warn?.(`mcp-panel: restore disabled for "${serverName}" failed: ${msgOf(error)}`)
   } finally {
     state.aiEnabled.delete(serverName)
     state.lastUsed.delete(serverName)
     state.refCounts.delete(serverName)
   }
+}
+
+/** 不可调用时的拒绝文案（区分预设隔离 / 档位关闭两种成因）。 */
+function blockedText(serverName: string, access: McpAccess): string {
+  switch (access.blockedBy) {
+    case 'preset':
+      return (
+        `MCP server "${serverName}" 未对当前 agent 预设（${access.presetId ?? '无预设'}）开放；` +
+        `如需使用，请在 MCP 管理面板调整该服务器的预设关联。`
+      )
+    case 'exposure':
+      return (
+        `MCP server "${serverName}" 已被设为「彻底关闭」（off），不可调用；` +
+        `如需使用，请在 MCP 管理面板把它的状态改为「原生注入 / 仅名称 / 隐藏」。`
+      )
+    case 'workspace':
+      return `MCP server "${serverName}" 属于另一个工作空间的项目级配置，仅该工作空间的会话可用。`
+    default:
+      return `未知 MCP server：${serverName}（不在注册表中）`
+  }
+}
+
+/** 从工具注册全名取裸名（`mcp__<server>__<tool>` → `<tool>`）。 */
+function bareNameOf(fullName: string): string {
+  const rest = String(fullName).replace(/^mcp__/, '')
+  const at = rest.indexOf('__')
+  return at < 0 ? rest : rest.slice(at + 2)
+}
+
+/**
+ * 该 server 的工具清单文本（`mcp_call` 只传 server、或工具名未知时返回）。
+ * 这是「仅名称」档位下模型发现工具的主要路径：不必猜名字，直接问。
+ */
+function toolListText(caches: McpControlCtx, serverName: string): string {
+  const rows = listServer(caches.getCatalog(), serverName)
+  if (!rows || rows.length === 0) {
+    return (
+      `MCP server "${serverName}" 目前没有采集到工具目录（可能尚未运行过或该 server 无工具）。` +
+      `可直接用 mcp_call 指定裸工具名尝试；或用 mcp_search({ server: "${serverName}" }) 重试。`
+    )
+  }
+  const lines = rows.map((tool) => `- ${bareNameOf(tool.name)}: ${tool.description || '（无描述）'}`)
+  return (
+    `MCP server "${serverName}" 的工具清单（共 ${rows.length} 个）：\n${lines.join('\n')}\n\n` +
+    `调用方式：mcp_call({ server: "${serverName}", tool: "<上面的裸名>", arguments: { ... } })`
+  )
 }
 
 function startIdleReaper(control: McpControlCtx, ctx: Context, state: ControllerState): () => void {
@@ -346,9 +427,9 @@ function startIdleReaper(control: McpControlCtx, ctx: Context, state: Controller
           // 此时放弃本轮回收，不清 owner 不打日志。
           if ((state.refCounts.get(server) ?? 0) > 0) return
           await control.clearAiOwner(entryId)
-          ctx.logger.info?.(`mcp-skill-panel: idle-reaped MCP server "${server}"`)
+          ctx.logger.info?.(`mcp-panel: idle-reaped MCP server "${server}"`)
         } catch (error) {
-          ctx.logger.warn?.(`mcp-skill-panel: idle reaper disable "${server}" failed: ${msgOf(error)}`)
+          ctx.logger.warn?.(`mcp-panel: idle reaper disable "${server}" failed: ${msgOf(error)}`)
         } finally {
           // 仅在无新调用接手时才删除状态，防止把新 call() 的计数清掉。
           if ((state.refCounts.get(server) ?? 0) === 0) {
@@ -374,6 +455,8 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
   }
 
   const controller: McpCallController = {
+    accessFor: (serverName, presetId, workspace) => caches.accessFor(serverName, presetId, workspace),
+
     async ensureEnabled(serverName): Promise<boolean> {
       const entry = caches.resolveEntry(serverName)
       if (!entry) throw new Error(`unknown MCP server "${serverName}"`)
@@ -393,28 +476,42 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
     },
 
     async call(serverName, toolName, args, agent, signal, explicitTimeoutMs) {
-      const bareTool = normalizeToolName(serverName, toolName)
+      // ① 访问判定（曝光档位 + 预设隔离）：与装配层同源，保证「看不到就调不动」
+      const access = caches.accessOf(serverName, agent)
+      if (access.blockedBy === 'unknown') return `未知 MCP server：${serverName}（不在注册表中）`
+      if (access.effective === 'off') return blockedText(serverName, access)
+
+      // ② 工具名未知/为空 → 直接返回该 server 的工具清单（「仅名称」档位的发现路径）
+      const rawTool = typeof toolName === 'string' ? toolName.trim() : ''
+      if (rawTool.length === 0 || rawTool === '*') return toolListText(caches, serverName)
+      const bareTool = normalizeToolName(serverName, rawTool)
       const name = `mcp__${serverName}__${bareTool}`
-      // 工具级禁用（面板指定关闭）：拒绝调用并给出明确提示（可经面板重新开启）。
-      // 项目 MCP 按会话工作区判定（A 区禁用不影响 B 区）；全局 MCP 无条件生效。
-      const workspace = typeof agent?.session?.header?.cwd === 'string' ? agent.session.header.cwd : undefined
-      if (isToolDisabled(name, workspace)) {
+      // ③ 工具级禁用（面板指定关闭）：拒绝并提示可经面板重新开启
+      if (policyDisablesTool(access.policy, name)) {
         return `MCP 工具 ${serverName}.${bareTool} 已被禁用（请在 MCP 管理面板打开该工具后再调用）`
       }
+
       const entry = caches.resolveEntry(serverName)
-      if (!entry) return `未知 MCP server：${serverName}（不在 loader 中）`
-      const entryId = entry.id
+      const ref = access.ref
       const presetTimeout = caches.presetTimeoutMs ? await caches.presetTimeoutMs(serverName).catch(() => undefined) : undefined
       const timeoutMs = explicitTimeoutMs ?? presetTimeout ?? caches.serverTimeoutMs(serverName)
 
+      // ④ 保活启用：loader 行可即时启停；预设组合行不在 loader 中，只能在已运行时直连执行
       let aiOwned = false
-      try {
-        aiOwned = await ensureEnabled(caches, ctx, state, serverName, entry)
-      } catch (error) {
-        return `启用 MCP server "${serverName}" 失败：${msgOf(error)}`
+      if (entry) {
+        try {
+          aiOwned = await ensureEnabled(caches, ctx, state, serverName, entry)
+        } catch (error) {
+          return `启用 MCP server "${serverName}" 失败：${msgOf(error)}`
+        }
+        state.refCounts.set(serverName, (state.refCounts.get(serverName) ?? 0) + 1)
+        state.lastUsed.set(serverName, Date.now())
+      } else if (!ref || !ref.running || ref.disabled) {
+        return (
+          `MCP server "${serverName}" 当前未运行，且它的行不在 loader 中（预设组合行）——` +
+          `无法即时保活启用。请在 MCP 管理面板把它切换为「原生注入」或「仅名称」后重启 DSH 生效。`
+        )
       }
-      state.refCounts.set(serverName, (state.refCounts.get(serverName) ?? 0) + 1)
-      state.lastUsed.set(serverName, Date.now())
 
       let failed = false
       try {
@@ -431,7 +528,7 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
           agent,
           signal,
         })) as { isError?: boolean; error?: unknown; content?: unknown } | undefined
-        state.lastUsed.set(serverName, Date.now())
+        if (entry) state.lastUsed.set(serverName, Date.now())
         if (result && result.isError) {
           failed = true
           return `MCP ${serverName}.${bareTool} 调用失败：${msgOf((result as { error?: unknown }).error ?? 'unknown error')}`
@@ -440,13 +537,15 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
         return text.length > 0 ? text : `MCP ${serverName}.${bareTool} 无返回内容`
       } catch (error) {
         failed = true
-        return `MCP ${serverName}.${bareTool} 调用异常：${msgOf(error)}（提示：tool 参数应传该 server 上的裸名；server/tool 是否存在可先 mcp_search 确认）`
+        return `MCP ${serverName}.${bareTool} 调用异常：${msgOf(error)}（提示：tool 参数应传该 server 上的裸名；不确定工具名时可用 mcp_call 只传 server 获取工具清单）`
       } finally {
-        const next = (state.refCounts.get(serverName) ?? 1) - 1
-        if (next <= 0) state.refCounts.delete(serverName)
-        else state.refCounts.set(serverName, next)
-        // 本次 AI 启用的，失败且无并发 → 恢复原状态
-        if (failed && aiOwned && next <= 0) void restore(caches, ctx, state, serverName, entryId)
+        if (entry) {
+          const next = (state.refCounts.get(serverName) ?? 1) - 1
+          if (next <= 0) state.refCounts.delete(serverName)
+          else state.refCounts.set(serverName, next)
+          // 本次 AI 启用的，失败且无并发 → 恢复原状态
+          if (failed && aiOwned && next <= 0) void restore(caches, ctx, state, serverName, entry.id)
+        }
       }
     },
 
@@ -506,7 +605,7 @@ function registerMcpSearchTool(ctx: Context, control: McpControlCtx): () => void
   const definition = defineTool({
     name: 'mcp_search',
     description:
-      '检索可用的 MCP 服务器与工具目录。空参数返回能力摘要表；传 server 列出该服务器的全部工具；传 query 做关键词 top-K 全文检索（命中返回完整 schema）。',
+      '检索可用的 MCP 服务器与工具目录。空参数返回当前会话可用的服务器索引；传 server 列出该服务器的全部工具；传 query 做关键词 top-K 全文检索（命中返回完整 schema）。只返回对当前 agent 预设开放且未彻底关闭的服务器。',
     parameters: {
       query: { type: 'string', description: '检索关键词，按工具名/描述/参数名打分' },
       server: { type: 'string', description: '列出指定 MCP server 的全部工具' },
@@ -518,16 +617,21 @@ function registerMcpSearchTool(ctx: Context, control: McpControlCtx): () => void
     },
     execute: async (args, exec) => {
       const catalog = control.getCatalog()
+      const agent = exec?.agent
       const query = typeof args.query === 'string' ? args.query.trim() : ''
       const server = typeof args.server === 'string' ? args.server.trim() : ''
       const limit = clampLimit(typeof args.limit === 'number' ? args.limit : undefined, control.searchLimitDefault, control.searchLimitMax)
-      // 按当前会话工作区过滤项目级禁用（全局禁用无条件生效）
-      const workspace = typeof exec?.agent?.session?.header?.cwd === 'string' ? exec.agent.session.header.cwd : undefined
-      const keep = (name: string): boolean => !isToolDisabled(name, workspace)
+      const access = (name: string): McpAccess => control.accessOf(name, agent)
+      // 可检索 = 非 off（预设隔离或彻底关闭都不返回）；工具级禁用单独过滤
+      const searchable = (name: string): boolean => access(name).effective !== 'off'
+      const keepTool = (name: string): boolean => !policyDisablesTool(access(serverOfMcp(name) ?? '').policy, name)
 
       if (server) {
+        if (!searchable(server)) {
+          return toJson({ ok: false, kind: 'list', server, found: false, error: blockedText(server, access(server)) })
+        }
         const result = listServer(catalog, server)
-        const tools = (result ?? []).filter((tool) => keep(tool.name))
+        const tools = (result ?? []).filter((tool) => keepTool(tool.name))
         return toJson({
           ok: true,
           kind: 'list',
@@ -539,13 +643,38 @@ function registerMcpSearchTool(ctx: Context, control: McpControlCtx): () => void
       }
 
       if (query) {
-        const hits: SearchHit[] = searchCatalog(catalog, query, limit).filter((hit) => keep(hit.tool.name))
+        // 检索覆盖 hidden 档（这正是「完全隐藏」的发现路径），但不含 off / 预设隔离
+        const hits: SearchHit[] = searchCatalog(catalog, query, limit)
+          .filter((hit) => searchable(hit.server))
+          .filter((hit) => keepTool(hit.tool.name))
         return toJson({ ok: true, kind: 'search', query, count: hits.length, limit, hits })
       }
 
-      const servers = buildSummary(control)
-      const text = servers.map((s) => `- ${s.server}: ${s.summary}`).join('\n')
-      return toJson({ ok: true, kind: 'summary', summary: text, servers, count: servers.length })
+      // 无参摘要：列出 native（工具已注入）与 name-only（名称已暴露）的服务器；
+      // hidden 只给计数提示（名字不外泄），off / 预设隔离完全不出现在结果里
+      const rows = buildSummary(control)
+      const listed: Array<{ server: string; summary: string; injected: boolean }> = []
+      let hiddenCount = 0
+      for (const row of rows) {
+        const effective = access(row.server).effective
+        if (!listedInSummary(effective)) {
+          if (effective === 'hidden') hiddenCount += 1
+          continue
+        }
+        listed.push({ server: row.server, summary: row.summary, injected: effective === 'native' })
+      }
+      const text = listed
+        .map((row) => `- ${row.server}: ${row.summary}${row.injected ? '（工具已直接注入上下文）' : ''}`)
+        .join('\n')
+      return toJson({
+        ok: true,
+        kind: 'summary',
+        summary: text,
+        servers: listed,
+        count: listed.length,
+        hiddenCount,
+        hiddenHint: hiddenCount > 0 ? `另有 ${hiddenCount} 个 MCP 服务器未列出，可用关键词检索` : null,
+      })
     },
   })
   return ctx.tools.register(definition)
@@ -598,5 +727,5 @@ export function installMcpControlTools(ctx: Context, control: McpControlCtx, con
     return () => {
       for (const d of disposers) d()
     }
-  }, 'mcp-skill-panel: mcp control tools')
+  }, 'mcp-panel: mcp control tools')
 }

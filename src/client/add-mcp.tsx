@@ -166,7 +166,7 @@ export function AddMcpModal(props: Props): React.ReactElement {
   const tokenPromise = useRef<Promise<string | null> | null>(null)
   const ensureToken = useCallback(() => {
     if (!tokenPromise.current) {
-      tokenPromise.current = fetch('/api/mcp-skill-panel/token')
+      tokenPromise.current = fetch('/api/mcp-panel/token')
         .then((r) => r.json() as Promise<{ token?: string }>)
         .then((b) => b?.token ?? null)
         .catch(() => null)
@@ -190,13 +190,13 @@ export function AddMcpModal(props: Props): React.ReactElement {
     setResult(null)
     setPreview(null)
     try {
-      const body = await post('/api/mcp-skill-panel/mcp/preview', { json })
+      const body = await post('/api/mcp-panel/mcp/preview', { json })
       if (!body.ok || typeof body.yaml !== 'string') {
         throw new Error(typeof body.error === 'string' ? body.error : 'preview failed')
       }
       setPreview({ names: Array.isArray(body.names) ? (body.names as string[]) : [], yaml: body.yaml })
     } catch (error) {
-      setResult({ ok: false, text: t('ri.addMcpError', { error: error instanceof Error ? error.message : String(error) }) })
+      setResult({ ok: false, text: t('mp.addMcpError', { error: error instanceof Error ? error.message : String(error) }) })
     } finally {
       setBusy(null)
     }
@@ -210,7 +210,7 @@ export function AddMcpModal(props: Props): React.ReactElement {
       // 项目目标不提交 workspace：由后端取「最近进入会话的工作区」写入（随切换实时），
       // 避免面板缓存的工作区过期导致加到旧项目。workspace prop 仅作展示提示。
       const payload: Record<string, unknown> = { json, target }
-      const body = await post('/api/mcp-skill-panel/mcp/add', payload)
+      const body = await post('/api/mcp-panel/mcp/add', payload)
       if (!body.ok || typeof body.added !== 'number') {
         throw new Error(typeof body.error === 'string' ? body.error : 'add failed')
       }
@@ -219,7 +219,7 @@ export function AddMcpModal(props: Props): React.ReactElement {
       onClose()
     } catch (error) {
       // 失败：留在弹窗内展示原因（JSON 转换失败、已全部存在、挂载失败等）
-      setResult({ ok: false, text: t('ri.addMcpError', { error: error instanceof Error ? error.message : String(error) }) })
+      setResult({ ok: false, text: t('mp.addMcpError', { error: error instanceof Error ? error.message : String(error) }) })
     } finally {
       setBusy(null)
     }
@@ -228,8 +228,8 @@ export function AddMcpModal(props: Props): React.ReactElement {
   return (
     <div style={C.overlay} role="dialog" aria-modal="true" onClick={onClose}>
       <div style={C.modal} onClick={(event) => event.stopPropagation()}>
-        <h3 style={C.title}>{t('ri.addMcp')}</h3>
-        <p style={C.hint}>{t('ri.addMcpPasteHint')}</p>
+        <h3 style={C.title}>{t('mp.addMcp')}</h3>
+        <p style={C.hint}>{t('mp.addMcpPasteHint')}</p>
 
         <textarea
           value={json}
@@ -241,9 +241,9 @@ export function AddMcpModal(props: Props): React.ReactElement {
         />
 
         <div style={C.row}>
-          <span style={C.label}>{t('ri.addMcpTarget')}</span>
+          <span style={C.label}>{t('mp.addMcpTarget')}</span>
           <button type="button" style={C.tab(target === 'global')} onClick={() => setTarget('global')}>
-            {t('ri.addMcpTargetGlobal')}
+            {t('mp.addMcpTargetGlobal')}
           </button>
           <button
             type="button"
@@ -251,20 +251,20 @@ export function AddMcpModal(props: Props): React.ReactElement {
             disabled={!workspace}
             onClick={() => setTarget('project')}
           >
-            {t('ri.addMcpTargetProject')}
+            {t('mp.addMcpTargetProject')}
           </button>
           {target === 'project' && (
             <span style={{ ...C.hint, flex: 1 }}>
-              {workspace ? `${t('ri.cwd')}: ${workspace}` : t('ri.addMcpNoWorkspace')}
+              {workspace ? `${t('mp.workspace')}: ${workspace}` : t('mp.addMcpNoWorkspace')}
             </span>
           )}
         </div>
 
         <div style={C.row}>
           <button type="button" style={C.action} disabled={busy !== null} onClick={() => void doPreview()}>
-            {busy === 'preview' ? t('ri.pending') : t('ri.addMcpPreview')}
+            {busy === 'preview' ? t('mp.working') : t('mp.addMcpPreview')}
           </button>
-          <span style={C.hint}>{preview ? `${t('ri.addMcpPreviewNames')}: ${preview.names.join(', ')}` : ''}</span>
+          <span style={C.hint}>{preview ? `${t('mp.addMcpPreviewNames')}: ${preview.names.join(', ')}` : ''}</span>
         </div>
 
         {result && <div style={result.ok ? C.success : C.error}>{result.text}</div>}
@@ -272,7 +272,7 @@ export function AddMcpModal(props: Props): React.ReactElement {
 
         <div style={C.footer}>
           <button type="button" style={C.action} disabled={busy !== null} onClick={onClose}>
-            {t('ri.addMcpCancel')}
+            {t('mp.addMcpCancel')}
           </button>
           <button
             type="button"
@@ -280,7 +280,7 @@ export function AddMcpModal(props: Props): React.ReactElement {
             disabled={busy !== null}
             onClick={() => void doAdd()}
           >
-            {busy === 'add' ? t('ri.pending') : t('ri.addMcpConfirm')}
+            {busy === 'add' ? t('mp.working') : t('mp.addMcpConfirm')}
           </button>
         </div>
       </div>
