@@ -55,6 +55,8 @@
 | 🛠️ **工具级禁用** | server 档位之上按工具精确控制；被禁工具不进检索、调用直接拒绝 |
 | 📊 **停用态回填** | 停用/隐藏的服务器仍显示「目录中有多少工具、约多少 token」（私有 catalog last-good 快照） |
 | 📁 **项目级 MCP** | 读取 `<工作空间>/.dsh/mcps/**/mcp.json`，**仅该项目工作空间的会话可见**；文件改动热更新 |
+| ✏️ **编辑 / 删除** | 面板直接改命令、参数、环境变量、URL、超时；删除会同时移除配置行、卸载运行时行并清理策略。预设组合行只读（附替代做法） |
+| 📥 **从其它 Agent 导入** | 扫描本机已知 MCP 配置（opencode / zcode / Claude Code / Cursor / Gemini CLI / 项目 `.mcp.json`）→ 勾选 → 导入为全局或项目，可顺带设定档位；只读源文件，一次性快照 |
 | ➕ **快速迁移** | 粘贴其它 harness 的 `mcpServers` JSON（Claude Code 等）→ 预览 → 一键添加为全局（profile patch）或项目（`.dsh/mcps/mcp.json`） |
 | ⏱️ **生效时机** | 「立即生效」（下轮即变，含缓存代价提示）或「下次会话生效」（当前会话零缓存失效） |
 | 💾 **重启保持** | 策略持久化到 `~/.dsh/dsh-mcp-panel/state.json`；启停意图在启动早期物化进组合文件 |
@@ -103,6 +105,8 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # 或 github:lilyblessing/dsh-mcp-pan
 5. **工具**（折叠区）：逐个禁用/启用该服务器的工具
 6. **生效时机**：切换「立即生效 / 下次会话生效」；后者积压的意图可点「立即应用待生效变更」强制生效
 7. **添加 MCP**：粘贴 `mcpServers` JSON，选择全局/项目目标后确认
+8. **编辑 / 删除**：每张卡片右下角有「编辑」「删除」——编辑改的是配置源文件本身（全局行 → profile patch，项目行 → `.dsh/mcps/mcp.json`），删除会二次确认。若该行声明在 agent 预设组合里（`agent.cordis.yml`），卡片会标「只读」并禁用这两个按钮（原因见下方「配置写回矩阵」）
+9. **从其它 Agent 导入**：右上角「从其它 Agent 导入」→ 自动扫描本机已知来源 → 勾选要搬进来的服务器（可追加自定义 JSON 路径）→ 选目标与导入后档位 → 确认
 
 > 状态徽标：🟢 运行中（有工具）/ ⚪ 已停止（档位为隐藏或关闭）/ 🟡 无工具（进程在跑但工具列表为空）/ 🔴 未运行（期望运行但进程没起来，多为 server 启动失败）。
 
@@ -117,6 +121,10 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # 或 github:lilyblessing/dsh-mcp-pan
 | POST | `/policy` | `{ updates: [{ serverName, workspace?, exposure?, presets?, disabledTools? }] }` 批量写策略 |
 | POST | `/policy/commit` | 立即应用「下次会话生效」模式积压的意图（有缓存代价） |
 | POST | `/mcp/toolToggle` | `{ serverName, workspace?, toolName, disabled }` 工具级禁用 |
+| GET | `/mcp/detail?serverName=&workspace=` | 编辑弹窗初值：可写目标、当前配置、动态（`!!js`）键清单 |
+| POST | `/mcp/update` | `{ serverName, workspace?, patch: { serverName?, transport?, command?, args?, env?, cwd?, url?, headers?, toolCallTimeoutMs? } }` 编辑并写回源文件 |
+| POST | `/mcp/remove` | `{ serverName, workspace? }` 删除（预设组合行返回 400 与替代做法） |
+| POST | `/mcp/scan` | `{ paths?: string[] }` 扫描其它 agent 的 MCP 配置（只读，内置清单 + 自定义路径） |
 | GET | `/config` | 读取生效时机与部署配置（middleLayer / defaultExposure） |
 | POST | `/config` | `{ applyMode: immediate\|next-session }` |
 | POST | `/mcp/preview` | `{ json }` 快速迁移预览（mcpServers JSON → 解析 + YAML patch 转换） |
@@ -177,6 +185,16 @@ sequenceDiagram
     Note over P: 引用计数 -1；空闲 30s 后回收（仅回收 AI 启用的）
 ```
 
+**配置写回矩阵**（编辑/删除的目标文件）：
+
+| 行的来源 | 文件 | 编辑/删除 |
+| --- | --- | --- |
+| 全局行 | `~/.dsh/profiles/<profile>/cordis.patch.yml`（loader 里这些行的 `tree.filename` 是根树 backing `cordis.yml`，每次启动被重置为空，所以真正要写的是同目录的 patch 文件） | 文本级替换/删除该行块，随后同步 loader |
+| 项目行 | `<workspace>/.dsh/mcps/**/mcp.json` | 改/删 JSON 键后重扫挂载 |
+| 预设组合行 | `<preset>/agent.cordis.yml` | **只读**：运行期写它会触发 standing 重挂事故；面板标「只读」并引导用「关闭」档位 |
+
+顺序固定为「先写文件、再动运行时」：反过来会出现「运行时改了但没落盘」的半状态。含 `!!js` 动态表达式的字段在编辑时以只读形式展示、写回时原样保留，绝不把表达式固化成当前值（否则导入进来的 `${VAR}` 会被写成明文密钥）。
+
 **持久化为何分两步**：`dsh-agent-presets` 用 `{mtimeMs, size}` stamp 检测组合文件变化并重挂 standing，而旧实例不会 dispose → 运行期写组合文件会导致 `serverName` 全冲突、会话创建失败（实测事故）。因此策略只写插件自己的 `state.json`，由启动早期（standing 未挂载）的物化把期望 `disabled` 写进组合文件。物化三条规则：**首次采用**（按文件现状建档，绝不反向覆盖用户手工配置）、**尊重外部修改**（文件与账本不一致时只对齐账本）、**物化**（期望 ≠ 现状才写）。
 
 ## ✅ 验证清单
@@ -199,6 +217,10 @@ sequenceDiagram
 - 「仅名称」档位会引入一段常驻索引文本（每个 server 一行）；隐藏/关闭则不引入。
 - preset 关联里被删除的预设 id 不会自动清理（保留配置，面板标注「已不存在」）。
 - 项目级 MCP 仅对**相同工作空间**的会话可见（按会话 cwd 判定，不做 `.git` 向上查找）。
+- **预设组合行只读**：`agent.cordis.yml` 里的 MCP 行不能从面板编辑或删除（框架约束，写该文件会让整个预设重挂并导致 MCP 名字冲突）。要让它们失效请用「关闭」档位；要真删请直接改文件。
+- **项目级 MCP 不支持改名**：它的名字由 `.dsh/mcps` 下的配置键决定，运行时的挂载名额外带路径哈希后缀；改名请直接编辑该文件。
+- **导入不跟踪源文件后续变化**：一次性快照，且不会修改源文件。
+- **不支持 TOML**：Codex 的 `~/.codex/config.toml` 与 Zed 的 `context_servers` 只在扫描结果里标注「已跳过」。
 
 ## 🛠️ 开发
 
@@ -217,6 +239,18 @@ node scripts/selftest-mcp.mjs        # catalog 检索 / 组合文件文本 / 项
 `lib/exposure.js` 是领域纯逻辑的独立构建入口，供自测直接断言真值表。
 
 ## 📋 变更日志
+
+### v0.6.1 — 编辑 / 删除 / 从其它 Agent 导入
+
+- **编辑**：面板直接改 serverName、传输方式、命令、参数、环境变量、工作目录、URL、请求头、工具调用超时；写回配置源文件并同步运行时。改名会自动迁移档位、预设关联与工具级禁用（含 `mcp__old__` → `mcp__new__` 前缀重写）
+- **删除**：二次确认后移除配置行 + 卸载 loader 行 + 清理策略
+- **从其它 Agent 导入**：扫描 opencode / zcode / Claude Code / Cursor / Gemini CLI / 项目 `.mcp.json` 等已知来源（可追加自定义路径），格式自动嗅探（`mcpServers` / `mcp` / `mcp.servers` / `servers` / 裸映射），字段自动归一（`type: local|remote`、`command` 数组、`environment` → `env`），导入时可顺便设定档位
+- **只读保护**：声明在 agent 预设组合里的行标注「只读」并禁用编辑/删除（附原因与替代做法）
+- **动态表达式保护**：含 `!!js` 的字段编辑时只读、写回时原样保留，避免把 `${VAR}` 固化成明文
+- **修复（v0.6.0 遗留）**：
+  1. 全局行（profile patch 行）的「停用」状态从未写回文件 —— loader 里这些行归属根树 `cordis.yml`，物化时必须落到同目录的 `cordis.patch.yml`，否则重启后「隐藏/关闭」档位的进程又跑起来
+  2. 「文件中无 disabled 键」被误判成「行不存在」，导致标志永远写不进去（`null` 歧义）
+  3. 组合文件的文本操作只认行首 `- id:`，对 patch 文件的缩进行无效
 
 ### v0.6.0 — 四档曝光 + 预设运行时隔离（破坏性重构）
 

@@ -53,6 +53,8 @@ A preset-isolated server **keeps running in the background**: sessions on other 
 | 🛠️ **Per-tool disable** | Fine-grained control above the server level; disabled tools leave retrieval and are refused on call |
 | 📊 **Stopped-state backfill** | Hidden/off servers still show "N tools, ~N tokens" from the private last-good catalog snapshot |
 | 📁 **Project-level MCP** | Reads `<workspace>/.dsh/mcps/**/mcp.json`, visible **only to sessions of that workspace**; hot-reloaded on file change |
+| ✏️ **Edit / delete** | Change command, args, env, URL, headers and timeout right in the panel; deleting removes the config row, unloads the runtime row and clears its policy. Preset composition rows are read-only (with a documented alternative) |
+| 📥 **Import from other agents** | Scans known MCP configs on this machine (opencode / zcode / Claude Code / Cursor / Gemini CLI / project `.mcp.json`) → pick → import as global or project, optionally setting the level. Source files are read-only; the import is a one-off snapshot |
 | ➕ **Quick migration** | Paste another harness's `mcpServers` JSON (Claude Code, …) → preview → add as global (profile patch) or project (`.dsh/mcps/mcp.json`) |
 | ⏱️ **Apply timing** | "Immediate" (next turn, with a cache-cost warning) or "Next session" (zero cache invalidation for the current session) |
 | 💾 **Survives restart** | Policies persist to `~/.dsh/dsh-mcp-panel/state.json`; enable/disable intent is materialized into compositions at early startup |
@@ -99,6 +101,8 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # or github:lilyblessing/dsh-mcp-pane
 5. **Tools** (collapsible): enable/disable individual tools of that server
 6. **Apply timing**: switch between "Immediate" and "Next session"; pending intents in the latter can be forced with "Apply pending now"
 7. **Add MCP**: paste `mcpServers` JSON, pick the global/project target, confirm
+8. **Edit / delete**: each card has Edit and Delete at the bottom right. Editing rewrites the row's own config source (global rows → profile patch, project rows → `.dsh/mcps/mcp.json`); deleting asks for confirmation. Rows declared in an agent preset composition (`agent.cordis.yml`) show a "Read-only" badge and disable both buttons (see the write-back matrix below for why)
+9. **Import from other agents**: top-right button → auto-scan known sources → tick the servers to bring over (custom JSON paths can be added) → choose target and level → confirm
 
 > Status badges: 🟢 Running (has tools) / ⚪ Stopped (level is hidden or off) / 🟡 No tools (process up, tool list empty) / 🔴 Not running (expected to run but the process is down — usually a failed server start).
 
@@ -113,6 +117,10 @@ Prefix `/api/mcp-panel` (the legacy prefixes `/api/mcp-skill-panel` and `/api/ru
 | POST | `/policy` | `{ updates: [{ serverName, workspace?, exposure?, presets?, disabledTools? }] }` batch policy write |
 | POST | `/policy/commit` | Force pending "next session" intents to take effect now (costs a cache miss) |
 | POST | `/mcp/toolToggle` | `{ serverName, workspace?, toolName, disabled }` per-tool disable |
+| GET | `/mcp/detail?serverName=&workspace=` | Edit-form seed: writable target, current config, dynamic (`!!js`) key list |
+| POST | `/mcp/update` | `{ serverName, workspace?, patch: {…} }` edit and write back to the config source |
+| POST | `/mcp/remove` | `{ serverName, workspace? }` delete (preset composition rows return 400 with the alternative) |
+| POST | `/mcp/scan` | `{ paths?: string[] }` scan other agents' MCP configs (read-only; built-in list + custom paths) |
 | GET / POST | `/config` | Read / write apply timing |
 | POST | `/mcp/preview`, `/mcp/add` | Quick migration preview / add |
 | GET | `/debug`, POST `/debug/collect` | Diagnostics |
@@ -147,6 +155,16 @@ Prefix `/api/mcp-panel` (the legacy prefixes `/api/mcp-skill-panel` and `/api/ru
 2. `off` / `hidden` → as configured
 3. `native` / `name-only`: process running and not inside an AI keep-alive window → as configured; otherwise degrade to `hidden` (tools stay out of context, `mcp_call` still works — capability is never silently lost)
 
+**Config write-back matrix** (where edit/delete actually write):
+
+| Row source | File | Edit / delete |
+| --- | --- | --- |
+| Global row | `~/.dsh/profiles/<profile>/cordis.patch.yml` (inside the loader these rows belong to the root tree whose `tree.filename` is `cordis.yml`, reset to empty on every boot — so the real target is the sibling patch file) | Text-level rewrite/removal of the row block, then the loader is synced |
+| Project row | `<workspace>/.dsh/mcps/**/mcp.json` | Change/remove the JSON key, then remount the workspace |
+| Preset composition row | `<preset>/agent.cordis.yml` | **Read-only**: writing it at runtime triggers the standing-remount incident; the panel marks it read-only and points at the "Off" level instead |
+
+Writes always hit the file first and the runtime second — the other order leaves a "runtime changed but nothing persisted" half state. Fields holding `!!js` expressions are shown read-only and kept verbatim on save, so an imported `${VAR}` is never frozen into a plaintext secret.
+
 **Why persistence takes two steps**: `dsh-agent-presets` detects composition-file changes via an `{mtimeMs, size}` stamp and remounts the standing composition without disposing the old one → writing the composition at runtime causes global `serverName` collisions and failed session creation (a measured incident). Policies therefore only write the plugin's own `state.json`; materialization into compositions happens at early startup (before any standing mount is attached), with three rules: **first adoption** (adopt the file's state, never overwrite a hand-edited row), **respect external edits** (align the ledger only), **materialize** (write only when the desired state differs).
 
 ## ⚠️ Known limitations
@@ -156,6 +174,10 @@ Prefix `/api/mcp-panel` (the legacy prefixes `/api/mcp-skill-panel` and `/api/ru
 - The "Name only" level adds a small standing index (one line per server); hidden/off add nothing.
 - A preset id that no longer exists stays in your config (marked in the UI) instead of being silently removed.
 - Project-level MCPs are visible only to sessions of the **same workspace** (matched by session cwd; no `.git` upward search).
+- **Preset composition rows are read-only**: MCP rows inside `agent.cordis.yml` cannot be edited or deleted from the panel (framework constraint — writing that file remounts the whole preset and breaks MCP name uniqueness). Use the "Off" level to disable them, or edit the file directly.
+- **Project-level MCPs cannot be renamed** from the panel: their name comes from the config key under `.dsh/mcps`, while the runtime mount name also carries a path-hash suffix. Edit the file to rename.
+- **Imports do not track source changes** (one-off snapshot) and never modify the source files.
+- **No TOML support**: Codex's `~/.codex/config.toml` and Zed's `context_servers` are listed as "skipped" in scan results.
 
 ## 🛠️ Development
 
@@ -171,6 +193,15 @@ node scripts/selftest-mcp.mjs        # catalog search / composition text / proje
 ```
 
 ## 📋 Changelog
+
+### v0.6.1 — edit / delete / import from other agents
+
+- **Edit**: change serverName, transport, command, args, env, cwd, URL, headers and tool timeout in the panel; the config source is rewritten and the runtime synced. Renaming migrates the level, preset scope and per-tool disables (including the `mcp__old__` → `mcp__new__` prefix rewrite)
+- **Delete**: confirm, then remove the config row, unload the loader row and clear the policy
+- **Import from other agents**: scans opencode / zcode / Claude Code / Cursor / Gemini CLI / project `.mcp.json` (plus custom paths), sniffs formats (`mcpServers` / `mcp` / `mcp.servers` / `servers` / bare map) and normalises fields (`type: local|remote`, array `command`, `environment` → `env`); the level can be set during import
+- **Read-only protection**: rows declared in an agent preset composition are badged read-only with the reason and an alternative
+- **Dynamic-expression protection**: `!!js` fields stay read-only in the form and verbatim on disk, so an imported `${VAR}` never becomes a plaintext secret
+- **Fixes (inherited from v0.6.0)**: global-row disable state was never persisted (root-tree rows must materialise into the sibling `cordis.patch.yml`); "no `disabled` key" was mistaken for "row missing", so flags could never be written; composition text editing only matched unindented `- id:` lines
 
 ### v0.6.0 — four exposure levels + preset runtime isolation (breaking)
 
