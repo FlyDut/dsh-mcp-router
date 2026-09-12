@@ -48,6 +48,16 @@ export declare function scanWorkspaceMcp(root: string, warn?: (message: string) 
 export declare function projectServerName(root: string, name: string): string;
 /** 安装项目 MCP 运行时：会话挂载 + 热更新。可见性由装配层按档位/工作区统一判定。返回释放函数。 */
 export declare function installProjectMcp(ctx: Context, policy: PolicyStore): () => void;
+/**
+ * 在 `<workspace>/.dsh/mcps/**\/mcp.json` 中定位某个挂载名（带路径哈希后缀）对应的
+ * **来源文件与原始键名**。编辑/删除项目行时用它把「运行时 serverName」映射回文件里的键。
+ *
+ * 扫描顺序与发现规则一致（根目录先、子目录后），因此倒序查找即「后写覆盖」的赢家。
+ */
+export declare function findProjectMcpFile(root: string, serverName: string): Promise<{
+    file: string;
+    key: string;
+} | undefined>;
 /** 面板添加/外部修改项目 MCP 文件后，强制重扫该工作空间并同步挂载（幂等）。 */
 export declare function remountWorkspace(ctx: Context, root: string, policy: PolicyStore): Promise<void>;
 /**

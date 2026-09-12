@@ -52,6 +52,14 @@ export interface PolicyStore {
     }>;
     /** 把全部待生效意图提升为生效；返回提升条数。 */
     commitPending(): Promise<number>;
+    /**
+     * 改名迁移：把策略从旧 serverName 搬到新 serverName，并把工具级禁用的注册全名
+     * 前缀一并重写（`mcp__old__x` → `mcp__new__x`）。不迁移等于改个名字就丢掉用户的
+     * 档位 / 预设关联 / 工具禁用。
+     */
+    renameServer(oldName: string, newName: string, workspace?: string): Promise<boolean>;
+    /** 删除某 server 的策略（该服务器被删除时调用）。返回是否确实删过。 */
+    clear(serverName: string, workspace?: string): Promise<boolean>;
     /** 以「预设文件现状」对齐一个从未配置过的 server（首次物化用）。 */
     adoptFromFile(serverName: string, workspace: string | undefined, fileDisabled: boolean | null): Promise<ServerPolicyState | undefined>;
     /** 记录某 server 的物化账本（写盘）。 */

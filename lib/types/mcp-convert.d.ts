@@ -55,5 +55,13 @@ export declare function resolveEnvRefs(value: string): string;
 export declare function resolveServersEnv(servers: McpServers): McpServers;
 /** 把 McpServers 转成 dsh-mcp-client 插件行（loader entry 形状）。 */
 export declare function serversToRows(servers: McpServers, idPrefix?: string): McpRowConfig[];
+/**
+ * 把 config 映射拆成「逐顶层键的 YAML 行」——每项的 `body` 相对 config 子键缩进
+ * （可含内部嵌套缩进），供组合文件的文本级替换使用（`composition-file.ts`）。
+ */
+export declare function configKeyBodies(config: Record<string, unknown>): Array<{
+    name: string;
+    body: string[];
+}>;
 /** 生成全局 profile 可追加的 `- insert:` patch 块（dsh-mcp-client 行，!!js 环境插值）。 */
 export declare function serversToPatchYaml(servers: McpServers): string;

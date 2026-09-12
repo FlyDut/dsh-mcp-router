@@ -21,5 +21,9 @@ export interface ServerCardProps {
     submit: (updates: Array<Record<string, unknown>>, key: string) => void;
     /** 工具级禁用开关（走 /mcp/toolToggle）。 */
     toggleTool: (row: McpRow, tool: McpToolInfo) => void;
+    /** 编辑该行的配置源（弹窗）。 */
+    onEdit: (row: McpRow) => void;
+    /** 删除该行（弹窗二次确认）。 */
+    onRemove: (row: McpRow) => void;
 }
 export declare function ServerCard(props: ServerCardProps): React.ReactElement;
