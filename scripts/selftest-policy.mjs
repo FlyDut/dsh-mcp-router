@@ -203,6 +203,111 @@ await checkAsync('policy：坏字段宽容解析（非法档位回落默认，�
   assert.equal(normalized, 'native')
 })
 
+/* ── ⑧ 全局行（profile patch 行）的停用物化（v0.6.0 缺陷回归）────────── */
+
+// 背景：profile patch 的 `- insert:` 行加载后属于根树，其 tree.filename 是根树 backing
+// 文件 cordis.yml（每次启动重置为 []）。v0.6.0 因跳过该文件而从未把「隐藏/关闭」档位的
+// 停用状态写回 patch 文件 —— 重启后进程又跑起来。本轮改为落到同目录的 cordis.patch.yml。
+const profileDir = join(fakeHome, 'profile')
+mkdirSync(profileDir, { recursive: true })
+const rootTree = join(profileDir, 'cordis.yml')
+const patchFile = join(profileDir, 'cordis.patch.yml')
+writeFileSync(rootTree, '[]\n', 'utf8')
+writeFileSync(
+  patchFile,
+  [
+    '- insert:',
+    '    - id: mcp-patchy',
+    "      name: '@deepseek-ai/dsh-mcp-client'",
+    '      config:',
+    '        transport: "stdio"',
+    '        serverName: "patchy"',
+    '        command: "npx"',
+    '- insert:',
+    '    - id: mcp-other',
+    "      name: '@deepseek-ai/dsh-mcp-client'",
+    '      config:',
+    '        transport: "stdio"',
+    '        serverName: "other"',
+    '        command: "node"',
+  ].join('\n') + '\n',
+  'utf8',
+)
+
+await checkAsync('syncPresetFiles：全局行（根树 cordis.yml）的 disabled 落到同目录 patch 文件', async () => {
+  const before = readFileSync(patchFile, 'utf8')
+  const rootBefore = readFileSync(rootTree, 'utf8')
+  await policy.set({ serverName: 'patchy', patch: { exposure: 'hidden' }, applyMode: 'immediate' })
+
+  const stubCtx = {
+    agents: { list: () => [] },
+    logger: { info() {}, warn() {}, debug() {} },
+  }
+  const stubRegistry = {
+    snapshot: () => ({
+      all: new Map([
+        [
+          'patchy',
+          {
+            serverName: 'patchy',
+            entryId: 'mcp-patchy',
+            rowId: 'mcp-patchy',
+            source: 'loader',
+            disabled: false,
+            running: true,
+            transport: 'stdio',
+            file: rootTree,
+          },
+        ],
+      ]),
+      byPreset: new Map(),
+      at: Date.now(),
+    }),
+  }
+  const written = await index.syncPresetFiles({ ctx: stubCtx, registry: stubRegistry, policy })
+  assert.equal(written, 1, '应物化 1 行')
+  const after = readFileSync(patchFile, 'utf8')
+  assert.notEqual(after, before, 'patch 文件应被改写')
+  assert.ok(after.includes('      disabled: true'), 'disabled 应写在 id 行的子缩进上')
+  const lines = after.split('\n')
+  const idAt = lines.findIndex((line) => line.trim() === '- id: mcp-patchy')
+  const otherAt = lines.findIndex((line) => line.trim() === '- id: mcp-other')
+  assert.ok(idAt >= 0 && lines[idAt + 1].trim() === 'disabled: true', '标志紧跟在 id 行之后')
+  assert.ok(!lines.slice(otherAt, otherAt + 2).some((line) => line.includes('disabled')), '其它行不受影响')
+  assert.equal(readFileSync(rootTree, 'utf8'), rootBefore, '根树 backing 文件绝不被写')
+})
+
+await checkAsync('syncPresetFiles：二次调用幂等（账本已对齐，不再写盘）', async () => {
+  const once = readFileSync(patchFile, 'utf8')
+  const written = await index.syncPresetFiles({
+    ctx: { agents: { list: () => [] }, logger: { info() {}, warn() {}, debug() {} } },
+    registry: {
+      snapshot: () => ({
+        all: new Map([
+          [
+            'patchy',
+            {
+              serverName: 'patchy',
+              entryId: 'mcp-patchy',
+              rowId: 'mcp-patchy',
+              source: 'loader',
+              disabled: false,
+              running: true,
+              transport: 'stdio',
+              file: rootTree,
+            },
+          ],
+        ]),
+        byPreset: new Map(),
+        at: Date.now(),
+      }),
+    },
+    policy,
+  })
+  assert.equal(written, 0, '已一致时不应再写')
+  assert.equal(readFileSync(patchFile, 'utf8'), once)
+})
+
 rmSync(fakeHome, { recursive: true, force: true })
 if (failed) process.exit(1)
 console.log('\nselftest-policy: all checks passed')

@@ -22,6 +22,10 @@ export interface ServerCardProps {
   submit: (updates: Array<Record<string, unknown>>, key: string) => void
   /** 工具级禁用开关（走 /mcp/toolToggle）。 */
   toggleTool: (row: McpRow, tool: McpToolInfo) => void
+  /** 编辑该行的配置源（弹窗）。 */
+  onEdit: (row: McpRow) => void
+  /** 删除该行（弹窗二次确认）。 */
+  onRemove: (row: McpRow) => void
 }
 
 const C = {
@@ -110,6 +114,20 @@ const C = {
   toolRow: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 },
   toolName: { flex: '0 0 auto', color: 'var(--dsw-alias-label-primary)', fontWeight: 500 },
   toolDesc: { flex: 1, color: 'var(--dsw-alias-label-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  opBtn: (primary: boolean, disabled: boolean): React.CSSProperties => ({
+    font: 'inherit',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    border: '1px solid var(--dsw-alias-border-l2)',
+    borderRadius: 6,
+    padding: '3px 10px',
+    fontSize: 11,
+    opacity: disabled ? 0.5 : 1,
+    color: primary ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-secondary)',
+    background: 'var(--dsw-alias-bg-layer-1)',
+    borderColor: primary ? 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, var(--dsw-alias-border-l2))' : 'var(--dsw-alias-border-l2)',
+    whiteSpace: 'nowrap' as const,
+  }),
+  actions: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 2, flexWrap: 'wrap' as const },
   toolSwitch: (disabled: boolean): React.CSSProperties => ({
     font: 'inherit',
     cursor: 'pointer',
@@ -151,7 +169,7 @@ function formatK(n: number): string {
 }
 
 export function ServerCard(props: ServerCardProps): React.ReactElement {
-  const { row, t, presets, presetsError, busy, toolBusy, submit, toggleTool } = props
+  const { row, t, presets, presetsError, busy, toolBusy, submit, toggleTool, onEdit, onRemove } = props
   const [presetOpen, setPresetOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
   const st = statusBadge(t, row)
@@ -219,10 +237,47 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
         {row.effectiveExposure !== row.exposure ? ` · ${t('mp.effective', { mode: t(exposureKey(row.effectiveExposure, 'label')) })}` : ''}
       </div>
 
-      <button type="button" style={C.fold} onClick={() => setPresetOpen((v) => !v)}>
-        {presetOpen ? '▾' : '▸'} {t('mp.presetsTitle')}：{t(`mp.presetMode.${scope.mode}`)}
-        {scope.mode !== 'all' ? ` (${scope.ids.length})` : ''}
-      </button>
+      <div style={C.actions}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button type="button" style={C.fold} onClick={() => setPresetOpen((v) => !v)}>
+            {presetOpen ? '▾' : '▸'} {t('mp.presetsTitle')}：{t(`mp.presetMode.${scope.mode}`)}
+            {scope.mode !== 'all' ? ` (${scope.ids.length})` : ''}
+          </button>
+          {toolList.length > 0 && (
+            <button type="button" style={C.fold} onClick={() => setToolsOpen((v) => !v)}>
+              {toolsOpen ? '▾' : '▸'} {t('mp.toolsTitle')} ({toolList.length})
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          {!row.writable && (
+            <span
+              style={C.badge('var(--dsw-alias-label-tertiary)', 'var(--dsw-alias-fill-l2)')}
+              title={t('mp.readonlyHint')}
+            >
+              {t('mp.readonlyBadge')}
+            </span>
+          )}
+          <button
+            type="button"
+            style={C.opBtn(false, !row.writable)}
+            disabled={!row.writable}
+            title={row.writable ? t('mp.edit') : t('mp.readonlyHint')}
+            onClick={() => onEdit(row)}
+          >
+            {t('mp.edit')}
+          </button>
+          <button
+            type="button"
+            style={C.opBtn(true, !row.writable)}
+            disabled={!row.writable}
+            title={row.writable ? t('mp.remove') : t('mp.readonlyHint')}
+            onClick={() => onRemove(row)}
+          >
+            {t('mp.remove')}
+          </button>
+        </div>
+      </div>
       {presetOpen && (
         <div style={C.panel}>
           <div style={C.presetRow}>
@@ -276,12 +331,7 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
         </div>
       )}
 
-      {toolList.length > 0 && (
-        <>
-          <button type="button" style={C.fold} onClick={() => setToolsOpen((v) => !v)}>
-            {toolsOpen ? '▾' : '▸'} {t('mp.toolsTitle')} ({toolList.length})
-          </button>
-          {toolsOpen && (
+      {toolList.length > 0 && toolsOpen && (
             <div style={C.toolList}>
               {toolList.map((tool) => {
                 const key = `${row.entryId}:${tool.name}`
@@ -303,8 +353,6 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
               })}
             </div>
           )}
-        </>
-      )}
     </div>
   )
 }

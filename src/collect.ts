@@ -335,6 +335,8 @@ async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<Mc
         pending: policy.isPending(serverName, ref.workspace),
         configured: intent !== undefined,
         source: ref.source,
+        // 预设组合行不可写：运行期写 agent.cordis.yml 会触发 standing 重挂事故
+        writable: ref.source !== 'preset',
         workspace: ref.workspace,
       })
     }

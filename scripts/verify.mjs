@@ -13,10 +13,14 @@ const check = (ok, label) => {
 const nodeOut = join(root, 'lib', 'index.js')
 const clientOut = join(root, 'lib', 'client.js')
 const exposureOut = join(root, 'lib', 'exposure.js')
+const compositionOut = join(root, 'lib', 'composition-file.js')
+const importOut = join(root, 'lib', 'external-import.js')
 const typesDir = join(root, 'lib', 'types')
 
 check(existsSync(nodeOut), `node bundle exists: ${nodeOut}`)
 check(existsSync(exposureOut), `domain bundle exists: ${exposureOut} (selftest-exposure.mjs depends on it)`)
+check(existsSync(compositionOut), `domain bundle exists: ${compositionOut} (selftest-composition-file.mjs depends on it)`)
+check(existsSync(importOut), `domain bundle exists: ${importOut} (selftest-external-import.mjs depends on it)`)
 check(existsSync(clientOut), `client bundle exists: ${clientOut}`)
 check(existsSync(typesDir) && readdirSync(typesDir, { recursive: true }).some((f) => String(f).endsWith('.d.ts')), 'lib/types/*.d.ts generated (package.json types must not dangle)')
 
@@ -28,9 +32,14 @@ if (existsSync(nodeOut)) {
   check(/import\s+Schema\s+from\s*"@deepseek-ai\/schemastery"/.test(src), 'external schemastery import kept')
 }
 
-if (existsSync(exposureOut)) {
-  const src = readFileSync(exposureOut, 'utf8')
-  check(!/from\s*["']@deepseek-ai\//.test(src), 'exposure bundle is dependency-free (pure domain logic)')
+for (const [file, label] of [
+  [exposureOut, 'exposure'],
+  [compositionOut, 'composition-file'],
+  [importOut, 'external-import'],
+]) {
+  if (!existsSync(file)) continue
+  const src = readFileSync(file, 'utf8')
+  check(!/from\s*["']@deepseek-ai\//.test(src), `${label} bundle is dependency-free (pure domain logic)`)
 }
 
 if (existsSync(clientOut)) {

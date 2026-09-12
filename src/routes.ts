@@ -18,11 +18,12 @@ import { randomBytes } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { readState, writeState, stateApplyMode, type ApplyMode } from './state'
 import { resolveAgent, resolveCollectScopeKey, scopeKeySource, getSchemasView, mergeSchemas, collectMcp, pruneExpired, DOMAIN_TTL_MS, type DomainCaches } from './collect'
 import { isMcpEntry } from './mcp-entry'
 import { parseMcpServersJson, serversToPatchYaml, serversToRows, type McpServers, type McpRowConfig } from './mcp-convert'
-import { remountWorkspace, getActiveWorkspace } from './project-mcp'
+import { projectServerName, remountWorkspace, getActiveWorkspace } from './project-mcp'
 import type { McpCallController } from './mcpcall'
 import type { Config } from './index'
 import type { CatalogRuntime } from './runtime-types'
@@ -30,6 +31,8 @@ import type { PolicyStore } from './domain/policy'
 import type { Registry } from './domain/registry'
 import { isExposure, normalizePresetScope, type Exposure, type PresetScope } from './domain/exposure'
 import { agentPresetId, agentWorkspace, lastSessionScope } from './domain/session-scope'
+import { describeImportedServer, knownMcpSources, parseExternalMcpConfig } from './domain/external-import'
+import { describeServer, removeServer, updateServer, type ServerConfigPatch } from './domain/mcp-edit'
 import type { PresetListView } from './shared-types'
 import { messageOf } from './util'
 
@@ -545,6 +548,128 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
     },
     {
       kind: 'exact',
+      path: `${API_PREFIX}/mcp/detail`,
+      handler: handle('GET', async (req) => {
+        // 编辑弹窗初值：该行的可写目标 + 当前配置 + 动态（!!js）键清单
+        const url = req.url ?? ''
+        const serverName = queryParam(url, 'serverName')
+        if (typeof serverName !== 'string' || serverName.length === 0) throw new Error('serverName is required')
+        const workspace = queryParam(url, 'workspace')
+        return await describeServer({ ctx: hostCtx, registry, policy }, { serverName, workspace })
+      }),
+    },
+    {
+      kind: 'exact',
+      path: `${API_PREFIX}/mcp/update`,
+      handler: handle('POST', async (req) => {
+        // 编辑一个可写行：写回配置源文件 + 同步运行时 + 改名时迁移策略
+        const parsed = JSON.parse((await readBody(req)) || '{}') as {
+          serverName?: unknown
+          workspace?: unknown
+          patch?: unknown
+        }
+        const serverName = typeof parsed.serverName === 'string' ? parsed.serverName.trim() : ''
+        if (serverName.length === 0) throw new Error('serverName is required')
+        if (parsed.patch === null || typeof parsed.patch !== 'object' || Array.isArray(parsed.patch)) {
+          throw new Error('patch object is required')
+        }
+        const workspace = typeof parsed.workspace === 'string' && parsed.workspace.length > 0 ? parsed.workspace : undefined
+        const result = await updateServer(
+          { ctx: hostCtx, registry, policy },
+          { serverName, workspace, patch: parsed.patch as ServerConfigPatch },
+        )
+        invalidateMcp()
+        return result
+      }, true),
+    },
+    {
+      kind: 'exact',
+      path: `${API_PREFIX}/mcp/remove`,
+      handler: handle('POST', async (req) => {
+        // 删除一个可写行：删块/删键 + 卸载 loader 行 + 清理策略；预设组合行拒绝
+        const parsed = JSON.parse((await readBody(req)) || '{}') as { serverName?: unknown; workspace?: unknown }
+        const serverName = typeof parsed.serverName === 'string' ? parsed.serverName.trim() : ''
+        if (serverName.length === 0) throw new Error('serverName is required')
+        const workspace = typeof parsed.workspace === 'string' && parsed.workspace.length > 0 ? parsed.workspace : undefined
+        const result = await removeServer({ ctx: hostCtx, registry, policy }, { serverName, workspace })
+        invalidateMcp()
+        return result
+      }, true),
+    },
+    {
+      kind: 'exact',
+      path: `${API_PREFIX}/mcp/scan`,
+      handler: handle('POST', async (req) => {
+        // 扫描其它 agent 的 MCP 配置（只读）：内置清单 + 调用方追加的自定义路径。
+        // 只回传归一化后的 MCP 条目，不泄漏源文件的其它内容。
+        const parsed = JSON.parse((await readBody(req)) || '{}') as { paths?: unknown }
+        const { workspace } = sessionScopeOf(undefined)
+        const workspaceForSources = getActiveWorkspace() ?? workspace
+        const builtin = knownMcpSources({ home: homedir(), workspace: workspaceForSources })
+        const extraPaths = (Array.isArray(parsed.paths) ? parsed.paths : [])
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          .map((value) => value.trim())
+        const seen = new Set<string>()
+        const candidates: Array<{ id: string; label: string; file: string; supported: boolean; note?: string }> = []
+        for (const source of builtin) {
+          if (seen.has(source.path)) continue
+          seen.add(source.path)
+          const entry: { id: string; label: string; file: string; supported: boolean; note?: string } = {
+            id: source.id,
+            label: source.label,
+            file: source.path,
+            supported: source.supported,
+          }
+          if (source.note !== undefined) entry.note = source.note
+          candidates.push(entry)
+        }
+        for (const file of extraPaths) {
+          if (seen.has(file)) continue
+          seen.add(file)
+          candidates.push({ id: `custom:${file}`, label: file, file, supported: true })
+        }
+
+        // 已有 serverName（含项目级行的 `name-<8hex>` 形态）用于标注「已存在」
+        const existing = [...registry.snapshot().all.keys()]
+        const isExisting = (name: string): boolean =>
+          existing.includes(name) || existing.some((server) => new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[0-9a-f]{8}$`).test(server))
+
+        const sources: Array<Record<string, unknown>> = []
+        for (const candidate of candidates) {
+          if (!candidate.supported) {
+            sources.push({ ...candidate, exists: false, skipped: candidate.note ?? '本版本不支持该格式' })
+            continue
+          }
+          let text: string
+          try {
+            text = await readFile(candidate.file, 'utf8')
+          } catch {
+            sources.push({ ...candidate, exists: false })
+            continue
+          }
+          const result = parseExternalMcpConfig(text)
+          sources.push({
+            ...candidate,
+            exists: true,
+            format: result.format ?? null,
+            errors: result.errors,
+            warnings: result.warnings,
+            servers: result.servers.map((server) => ({
+              name: server.name,
+              transport: server.config.transport,
+              summary: describeImportedServer(server),
+              enabled: server.enabled,
+              notes: server.notes,
+              config: server.config,
+              existing: isExisting(server.name),
+            })),
+          })
+        }
+        return { sources, workspace: workspaceForSources ?? null }
+      }, true),
+    },
+    {
+      kind: 'exact',
       path: `${API_PREFIX}/mcp/preview`,
       handler: handle('POST', async (req) => {
         const parsed = JSON.parse((await readBody(req)) || '{}') as { json?: string }
@@ -576,7 +701,9 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
           }
           await registry.refreshNow()
           invalidateMcp()
-          return { target, ...result, warnings }
+          // names = 实际挂载名（前端据此对新导入项批量设置档位）
+          const names = Object.keys(servers).filter((name) => !result.skipped.includes(name))
+          return { target, ...result, names, warnings }
         }
         // project：写入 <workspace>/.dsh/mcps/mcp.json 并重扫挂载（立即生效）
         let workspace = typeof parsed.workspace === 'string' && parsed.workspace.length > 0 ? parsed.workspace : undefined
@@ -588,7 +715,9 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
         await remountWorkspace(ctx, workspace, policy)
         await registry.refreshNow()
         invalidateMcp()
-        return { target: 'project', ...written, workspace, added: Object.keys(servers).length, warnings }
+        // 项目行的挂载名带路径哈希后缀：这里回传真实名字，供前端设置档位
+        const names = Object.keys(servers).map((name) => projectServerName(workspace, name))
+        return { target: 'project', ...written, workspace, added: Object.keys(servers).length, names, warnings }
       }, true),
     },
   ]

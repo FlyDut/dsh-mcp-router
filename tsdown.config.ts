@@ -76,6 +76,38 @@ export default defineConfig([
     },
   },
   {
+    // 组合文件（patch / agent preset cordis.yml）的文本级行操作：
+    // 行块定位 / 删除 / config 键替换 / 缩进行标志。纯逻辑，供 selftest 覆盖。
+    entry: ['src/domain/composition-file.ts'],
+    format: ['esm'],
+    outDir: 'lib',
+    target: 'node22',
+    platform: 'node',
+    external: [/^@deepseek-ai\//, /^node:/],
+    dts: false,
+    clean: false,
+    sourcemap: false,
+    outputOptions: {
+      entryFileNames: 'composition-file.js',
+    },
+  },
+  {
+    // 外部 agent 配置（opencode / zcode / Claude Code / Cursor / VS Code）的
+    // MCP 嗅探与归一化。纯逻辑，供 selftest 覆盖。
+    entry: ['src/domain/external-import.ts'],
+    format: ['esm'],
+    outDir: 'lib',
+    target: 'node22',
+    platform: 'node',
+    external: [/^@deepseek-ai\//, /^node:/],
+    dts: false,
+    clean: false,
+    sourcemap: false,
+    outputOptions: {
+      entryFileNames: 'external-import.js',
+    },
+  },
+  {
     entry: ['src/client/index.ts'],
     // cjs：ModuleLoader factory 提供 require/module/exports，import 必须转成 require 调用
     format: ['cjs'],

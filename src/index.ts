@@ -55,14 +55,16 @@ export { createPolicyStore } from './domain/policy'
 // schemas 视图合并 + 状态徽标判定（selftest 回归护栏）
 export { mergeSchemas, computeStatus } from './collect'
 // 预设文件文本操作（selftest 回归护栏 + 潜在外部复用）
-export { setRowFlag, rowDisabledState, syncPresetFiles } from './preset'
+export { setRowFlag, rowDisabledState, removeRow, materializeTargetOf, syncPresetFiles } from './preset'
 // 项目 MCP 扫描（selftest 回归护栏：根目录先读、子目录覆盖的去重规则）
 export { scanWorkspaceMcp } from './project-mcp'
 // 项目 MCP 运行时装配（外部复用/端到端验证：手动安装、按工作空间重扫、owner 查询）
-export { installProjectMcp, remountWorkspace, projectServerOwner, projectServerName } from './project-mcp'
+export { installProjectMcp, remountWorkspace, projectServerOwner, projectServerName, findProjectMcpFile } from './project-mcp'
 export { readState, writeState } from './state'
 // rc.1 standing 组合 preset 行解析（selftest 回归护栏：parsePresetMcpText 文本抽取 + mcp-anki 例外）
 export { parsePresetMcpText, firstMatchServerName } from './preset-mcp'
+// 编辑 / 删除编排（selftest-mcp-edit.mjs 用最小 ctx 桩直接验证文件写回与只读拒绝）
+export { describeServer, removeServer, resolveWritableTarget, updateServer } from './domain/mcp-edit'
 // 领域纯逻辑再导出（端到端验证与外部复用；独立构建入口见 lib/exposure.js）
 export { decideExposure, desiredRunning, presetAllows, isExposure } from './domain/exposure'
 

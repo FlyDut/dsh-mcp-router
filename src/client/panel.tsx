@@ -8,6 +8,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { McpRow, McpToolInfo, McpView, PresetListView, PresetOption } from '../shared-types'
 import { AddMcpModal } from './add-mcp'
+import { EditMcpModal } from './edit-mcp'
+import { ImportMcpModal } from './import-mcp'
 import { ServerCard } from './server-card'
 
 interface Props {
@@ -118,6 +120,28 @@ const C = {
   },
 }
 
+/** 删除二次确认框样式（轻量内联，不引入额外组件）。 */
+const confirmOverlay: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(0, 0, 0, 0.45)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 1000,
+}
+const confirmModal: React.CSSProperties = {
+  width: 'min(480px, calc(100vw - 48px))',
+  background: 'var(--dsw-alias-bg-layer-1)',
+  border: '1px solid var(--dsw-alias-border-l2)',
+  borderRadius: 10,
+  padding: '16px 18px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
+}
+
 /** 进程级随机令牌缓存（token 全程不变，复用免重复请求）。 */
 let tokenPromise: Promise<string | null> | null = null
 function ensureToken(): Promise<string | null> {
@@ -145,6 +169,13 @@ export function McpPanelSection(props: Props): React.ReactElement {
   const [toolBusy, setToolBusy] = useState<Record<string, boolean>>({})
   const [warn, setWarn] = useState<{ text: string; severe: boolean } | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  /** 正在编辑的行（null = 未打开编辑弹窗）。 */
+  const [editing, setEditing] = useState<McpRow | null>(null)
+  /** 待确认删除的行（null = 未打开确认框）。 */
+  const [removing, setRemoving] = useState<McpRow | null>(null)
+  const [removingBusy, setRemovingBusy] = useState(false)
+  const [defaultExposure, setDefaultExposure] = useState<string>('native')
   const warnTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const seq = useRef(0)
 
@@ -186,9 +217,10 @@ export function McpPanelSection(props: Props): React.ReactElement {
     load()
     loadPresets()
     fetch('/api/mcp-panel/config')
-      .then((r) => r.json() as Promise<{ ok: boolean; applyMode?: ApplyMode }>)
+      .then((r) => r.json() as Promise<{ ok: boolean; applyMode?: ApplyMode; defaultExposure?: string }>)
       .then((b) => {
         if (b.ok && b.applyMode) setApplyMode(b.applyMode)
+        if (b.ok && typeof b.defaultExposure === 'string') setDefaultExposure(b.defaultExposure)
       })
       .catch(() => {
         /* 默认 immediate */
@@ -343,6 +375,31 @@ export function McpPanelSection(props: Props): React.ReactElement {
     }
   }, [load, showWarn, t])
 
+  const confirmRemove = useCallback(async () => {
+    const row = removing
+    if (!row) return
+    setRemovingBusy(true)
+    setError(null)
+    try {
+      const token = await ensureToken()
+      const headers: Record<string, string> = { 'content-type': 'application/json' }
+      if (token) headers['x-panel-token'] = token
+      const res = await fetch('/api/mcp-panel/mcp/remove', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace }),
+      })
+      const body = (await res.json()) as { ok: boolean; error?: string; file?: string }
+      if (!body.ok) throw new Error(body.error ?? 'remove failed')
+      setRemoving(null)
+      load()
+    } catch (err) {
+      setError(t('mp.removeError', { error: err instanceof Error ? err.message : String(err) }))
+    } finally {
+      setRemovingBusy(false)
+    }
+  }, [ensureToken, load, removing, t])
+
   const hasPending = Boolean(view?.mcp.some((row) => row.pending))
 
   return (
@@ -357,6 +414,9 @@ export function McpPanelSection(props: Props): React.ReactElement {
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="button" style={C.refresh} onClick={() => setShowAdd(true)}>
             {t('mp.addMcp')}
+          </button>
+          <button type="button" style={C.refresh} onClick={() => setShowImport(true)}>
+            {t('mp.importTitle')}
           </button>
           <button
             type="button"
@@ -466,6 +526,8 @@ export function McpPanelSection(props: Props): React.ReactElement {
               toolBusy={toolBusy}
               submit={submit}
               toggleTool={(r, tool) => void toggleTool(r, tool)}
+              onEdit={(r) => setEditing(r)}
+              onRemove={(r) => setRemoving(r)}
             />
           ))}
         </>
@@ -478,6 +540,51 @@ export function McpPanelSection(props: Props): React.ReactElement {
           onClose={() => setShowAdd(false)}
           onAdded={load}
         />
+      )}
+
+      {showImport && (
+        <ImportMcpModal
+          t={t}
+          workspace={view?.activeWorkspace ?? view?.cwd ?? null}
+          defaultExposure={defaultExposure}
+          onClose={() => setShowImport(false)}
+          onImported={load}
+        />
+      )}
+
+      {editing && (
+        <EditMcpModal
+          t={t}
+          row={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null)
+            load()
+          }}
+        />
+      )}
+
+      {removing && (
+        <div style={confirmOverlay} role="dialog" aria-modal="true" onClick={() => (removingBusy ? undefined : setRemoving(null))}>
+          <div style={confirmModal} onClick={(event) => event.stopPropagation()}>
+            <h3 style={C.cardTitle}>{t('mp.removeTitle', { server: removing.serverName })}</h3>
+            <p style={C.cardDesc}>{t('mp.removeConfirm')}</p>
+            <p style={C.hint}>{removing.source === 'project' ? t('mp.editTargetProject') : t('mp.editTargetPatch')}</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+              <button type="button" style={C.refresh} disabled={removingBusy} onClick={() => setRemoving(null)}>
+                {t('mp.editCancel')}
+              </button>
+              <button
+                type="button"
+                style={{ ...C.refresh, color: 'var(--dsw-alias-state-error-primary)' }}
+                disabled={removingBusy}
+                onClick={() => void confirmRemove()}
+              >
+                {removingBusy ? t('mp.working') : t('mp.removeDo')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

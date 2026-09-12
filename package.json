@@ -1,7 +1,7 @@
 {
   "name": "dsh-mcp-panel",
-  "version": "0.6.0",
-  "description": "MCP 管理面板：每个服务器四档曝光（原生注入 / 仅名称 / 隐藏 / 关闭）+ 按 agent 预设做运行时隔离；隐藏的 MCP 由 mcp_search/mcp_call 按需调用。",
+  "version": "0.6.1",
+  "description": "MCP 管理面板：四档曝光（原生注入 / 仅名称 / 隐藏 / 关闭）+ 按 agent 预设做运行时隔离，支持编辑/删除 MCP 配置与从其它 agent（opencode / zcode / Claude Code 等）一键导入。",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",

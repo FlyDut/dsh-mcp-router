@@ -1,80 +1,57 @@
 /**
- * 预设组合文件的文本操作与启停意图物化。
+ * 组合文件的文本操作与启停意图物化。
  *
- * 运行期禁止写 agent 组合文件（dsh-agent-presets 的 {mtimeMs,size} stamp 检测会触发
- * standing 重挂事故，见 index.ts 铁律 1），因此档位切换只写 state.json 的意图，
+ * 运行期禁止写 agent 预设组合文件（dsh-agent-presets 的 {mtimeMs,size} stamp 检测会
+ * 触发 standing 重挂事故，见 index.ts 铁律 1），因此档位切换只写 state.json 的意图，
  * 由 `syncPresetFiles` 在插件 apply（启动早期、standing 未挂载）时物化到组合文件。
- * 本模块的组合文件部分为纯文本操作，可被 selftest 覆盖。
+ *
+ * 文本级操作（行块定位、标志读写、config 替换）统一收敛在 `domain/composition-file.ts`，
+ * 本模块只负责「物化目标解析 + 同步编排」，并保留对外的薄包装以便自测与复用。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { basename } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import type { PolicyStore } from './domain/policy'
 import type { Registry } from './domain/registry'
 import { desiredRunning, decideSyncAction } from './domain/exposure'
+import { findRowBlock, removeRowBlock, rowFlagAt, setRowFlagAt } from './domain/composition-file'
 
-/** 根树 backing 文件名（每次启动重置为 []，写它无意义）。 */
+/** 根树 backing 文件名：每次启动重置为 `[]`，真正承载用户行的补丁层是同目录的 patch 文件。 */
 const ROOT_TREE_FILE = 'cordis.yml'
+/** profile 用户补丁层文件名。 */
+const PROFILE_PATCH_FILE = 'cordis.patch.yml'
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-/** 新行分隔符：跟随原文件。 */
-function lineSep(text: string): string {
-  return text.includes('\r\n') ? '\r\n' : '\n'
+/**
+ * 解析「可持久化的物化目标文件」。
+ *
+ * 关键事实（2026-09 实测确认）：profile patch（`cordis.patch.yml`）的 `- insert:` 行在
+ * 加载后属于**根树**，其 `tree.filename` 是根树 backing 文件 `cordis.yml`（每次启动被
+ * 重置为 `[]`）。因此对它写 disabled 标志必须落在同目录的 patch 文件上，否则重启后
+ * 意图丢失（v0.6.0 曾因此让「隐藏/关闭」档位不再停用进程）。
+ */
+export function materializeTargetOf(file: string | undefined): string | undefined {
+  if (typeof file !== 'string' || file.length === 0) return undefined
+  return basename(file) === ROOT_TREE_FILE ? join(dirname(file), PROFILE_PATCH_FILE) : file
 }
 
 /**
- * 在组合文件中对 `- id: <rowId>` 行做 `  <key>: <value>` 标记的插入/移除。
- * 逐行文本编辑，保留注释与 !!js 表达式原样（loader 的 yaml.dump 会丢注释，故不用）。
+ * 在组合文件中对 `- id: <rowId>` 行做 `  <key>: <value>` 标记的插入/移除
+ * （薄包装 → `domain/composition-file.ts` 的 `setRowFlagAt`，支持缩进行）。
  *
- * 语义（2026-08-27 修复）：value=true 保证标记存在且为 true（已有 false 时反转）；
- * value=false 移除标记。
+ * 语义：`value=true` 保证标记存在且为 true（已有 `false` 时反转）；`value=false` 移除标记。
  */
 export function setRowFlag(text: string, rowId: string, key: string, value: boolean): string {
-  const nl = lineSep(text)
-  const lines = text.split(/\r?\n/)
-  const rowRe = new RegExp(`^-\\s*id:\\s*${escapeRegExp(rowId)}\\s*$`)
-  const idx = lines.findIndex((line) => rowRe.test(line))
-  if (idx < 0) throw new Error(`row "- id: ${rowId}" not found in composition file`)
-  let end = idx + 1
-  while (end < lines.length && !/^-\s*id:/.test(lines[end])) end += 1
-  const block = lines.slice(idx, end)
-  const flagRe = new RegExp(`^\\s*${escapeRegExp(key)}:\\s*(true|false)\\s*$`)
-  const flagAt = block.findIndex((line) => flagRe.test(line))
-  if (flagAt >= 0) {
-    if (value) {
-      // 已有标记但为 false → 替换为 true（反转）；已有 true → 文本不变（幂等）
-      if (/:\s*false\s*$/.test(block[flagAt])) {
-        lines.splice(idx + flagAt, 1, `  ${key}: true`)
-        return lines.join(nl)
-      }
-      return text
-    }
-    // 移除现有标记行（flagAt 是行块内偏移 → 全局偏移为 idx + flagAt）
-    lines.splice(idx + flagAt, 1)
-    return lines.join(nl)
-  }
-  if (value) {
-    lines.splice(idx + 1, 0, `  ${key}: true`)
-    return lines.join(nl)
-  }
-  return text
+  return setRowFlagAt(text, rowId, key, value)
 }
 
 /** 读取某行当前是否带 disabled: true（true/false/null=无标记/行不存在）。 */
 export function rowDisabledState(text: string, rowId: string): boolean | null {
-  const lines = text.split(/\r?\n/)
-  const rowRe = new RegExp(`^-\\s*id:\\s*${escapeRegExp(rowId)}\\s*$`)
-  const idx = lines.findIndex((line) => rowRe.test(line))
-  if (idx < 0) return null
-  let end = idx + 1
-  while (end < lines.length && !/^-\s*id:/.test(lines[end])) end += 1
-  const block = lines.slice(idx, end)
-  const flagLine = block.find((line) => /^\s*disabled:\s*(true|false)\s*$/.test(line))
-  if (!flagLine) return null
-  return /:\s*true\s*$/.test(flagLine)
+  return rowFlagAt(text, rowId, 'disabled')
+}
+
+/** `- id: <rowId>` 行块整块删除（删除持久行用；块内仅此一行时连 `- insert:` 头一起删）。 */
+export function removeRow(text: string, rowId: string): { text: string; removed: boolean } {
+  return removeRowBlock(text, rowId)
 }
 
 export interface SyncPresetDeps {
@@ -106,14 +83,13 @@ export async function syncPresetFiles(deps: SyncPresetDeps): Promise<number> {
 
   // ① 首次采用：文件里有行、策略表里没有 → 按文件现状建档（不写文件）
   for (const ref of snapshot.all.values()) {
-    const workspace = ref.workspace
-    if (workspace !== undefined) continue // 项目级行不写组合文件
+    if (ref.workspace !== undefined) continue // 项目级行不写组合文件
     if (policy.intent(ref.serverName, undefined)) continue
-    const file = await readComposition(ref.file)
+    const file = await readComposition(materializeTargetOf(ref.file))
     if (!file) continue
-    const cur = rowDisabledState(file.text, ref.rowId)
-    if (cur === null) continue
-    await policy.adoptFromFile(ref.serverName, undefined, cur)
+    // 行必须真实存在才谈「采用」：`rowFlagAt` 的 null 同时表示「无该行」与「无 disabled 键」
+    if (!findRowBlock(file.text, ref.rowId)) continue
+    await policy.adoptFromFile(ref.serverName, undefined, rowFlagAt(file.text, ref.rowId, 'disabled') === true)
   }
 
   // ② 按文件分组物化（同一文件只读一次、只写一次）
@@ -123,12 +99,13 @@ export async function syncPresetFiles(deps: SyncPresetDeps): Promise<number> {
     const intent = policy.intent(ref.serverName, undefined)
     if (!intent) continue
     const wantDisabled = !desiredRunning(intent.exposure)
-    // 根树 backing 文件每次启动重置为 []：写它无意义
-    if (!ref.file || basename(ref.file) === ROOT_TREE_FILE) continue
-    let bucket = targets.get(ref.file)
+    // 根树 backing 文件（cordis.yml，每次启动重置为 []）→ 落到同目录的 patch 文件
+    const file = materializeTargetOf(ref.file)
+    if (!file) continue
+    let bucket = targets.get(file)
     if (!bucket) {
       bucket = []
-      targets.set(ref.file, bucket)
+      targets.set(file, bucket)
     }
     bucket.push({ rowId: ref.rowId, wantDisabled, serverName: ref.serverName })
   }
@@ -141,9 +118,12 @@ export async function syncPresetFiles(deps: SyncPresetDeps): Promise<number> {
     let changed = false
     let ledgerChanged = false
     for (const row of rows) {
-      const cur = rowDisabledState(text, row.rowId)
-      if (cur === null) continue // 行已不存在：放弃管理
-      const applied = policy.intent(row.serverName, undefined)?.applied
+      if (!findRowBlock(text, row.rowId)) continue // 行确实不存在（用户已删除）：放弃管理
+      // 无 disabled 键 = 未停用（与 setRowFlag 的语义一致）—— 必须归一为 false，
+      // 否则「文件中无该键」会被误判成「行不存在」，标志永远写不进去。
+      const cur = rowFlagAt(text, row.rowId, 'disabled') === true
+      const appliedRaw = policy.intent(row.serverName, undefined)?.applied
+      const applied = appliedRaw === undefined ? undefined : appliedRaw === true
       const action = decideSyncAction({ cur, applied, wantDisabled: row.wantDisabled, configured: true })
       if (action === 'align-ledger') {
         // 文件被外部改过：尊重现状（对齐账本，不覆盖）
@@ -158,7 +138,7 @@ export async function syncPresetFiles(deps: SyncPresetDeps): Promise<number> {
       }
       if (action !== 'materialize') continue
       try {
-        text = setRowFlag(text, row.rowId, 'disabled', row.wantDisabled)
+        text = setRowFlagAt(text, row.rowId, 'disabled', row.wantDisabled)
         changed = true
         materialized += 1
         await policy.markApplied(row.serverName, undefined, row.wantDisabled)

@@ -53,6 +53,8 @@ export interface McpRow {
   /** 是否已被用户显式配置过（false = 使用默认档位）。 */
   configured?: boolean
   source: McpSource
+  /** 面板能否编辑/删除该行（预设组合行只读）。 */
+  writable: boolean
   /** 项目级 MCP 所属工作空间。 */
   workspace?: string
   /** 该 server 的工具列表（面板工具级禁用用；null = 暂无目录）。 */

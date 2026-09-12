@@ -68,6 +68,15 @@ jobs:
       - name: Selftest (policy store: migration / persistence / apply timing)
         run: node scripts/selftest-policy.mjs
 
+      - name: Selftest (composition file: block locate / remove / config rewrite)
+        run: node scripts/selftest-composition-file.mjs
+
+      - name: Selftest (external import: format sniffing / field normalisation)
+        run: node scripts/selftest-external-import.mjs
+
+      - name: Selftest (edit/remove orchestration: file write-back / readonly / rename)
+        run: node scripts/selftest-mcp-edit.mjs
+
       - name: Selftest (catalog / preset text / project mcp / conversion)
         run: node scripts/selftest-mcp.mjs
 
@@ -79,6 +88,8 @@ jobs:
             lib/index.js
             lib/catalog.js
             lib/exposure.js
+            lib/composition-file.js
+            lib/external-import.js
             lib/client.js
             lib/mcp-convert.js
             lib/types

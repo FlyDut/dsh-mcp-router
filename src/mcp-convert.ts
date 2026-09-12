@@ -269,6 +269,19 @@ function emitYaml(obj: Record<string, unknown>, indent: string): string[] {
   return out
 }
 
+/**
+ * 把 config 映射拆成「逐顶层键的 YAML 行」——每项的 `body` 相对 config 子键缩进
+ * （可含内部嵌套缩进），供组合文件的文本级替换使用（`composition-file.ts`）。
+ */
+export function configKeyBodies(config: Record<string, unknown>): Array<{ name: string; body: string[] }> {
+  const out: Array<{ name: string; body: string[] }> = []
+  for (const [name, value] of Object.entries(config)) {
+    if (value === undefined) continue
+    out.push({ name, body: emitYaml({ [name]: value }, '') })
+  }
+  return out
+}
+
 /** 生成全局 profile 可追加的 `- insert:` patch 块（dsh-mcp-client 行，!!js 环境插值）。 */
 export function serversToPatchYaml(servers: McpServers): string {
   const lines: string[] = []

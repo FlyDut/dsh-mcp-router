@@ -313,6 +313,36 @@ export function installProjectMcp(ctx: Context, policy: PolicyStore): () => void
   }
 }
 
+/**
+ * 在 `<workspace>/.dsh/mcps/**\/mcp.json` 中定位某个挂载名（带路径哈希后缀）对应的
+ * **来源文件与原始键名**。编辑/删除项目行时用它把「运行时 serverName」映射回文件里的键。
+ *
+ * 扫描顺序与发现规则一致（根目录先、子目录后），因此倒序查找即「后写覆盖」的赢家。
+ */
+export async function findProjectMcpFile(
+  root: string,
+  serverName: string,
+): Promise<{ file: string; key: string } | undefined> {
+  const mcpsDir = join(root, MCPS_DIR)
+  if (!(await isDirectory(mcpsDir))) return undefined
+  const files: string[] = []
+  await collectMcpJsonFiles(mcpsDir, files)
+  for (let i = files.length - 1; i >= 0; i -= 1) {
+    const file = files[i]
+    let text: string
+    try {
+      text = await readFile(file, 'utf8')
+    } catch {
+      continue
+    }
+    const parsed = parseMcpServersJson(text)
+    for (const key of Object.keys(parsed.servers)) {
+      if (projectServerName(root, key) === serverName) return { file, key }
+    }
+  }
+  return undefined
+}
+
 /** 面板添加/外部修改项目 MCP 文件后，强制重扫该工作空间并同步挂载（幂等）。 */
 export async function remountWorkspace(ctx: Context, root: string, policy: PolicyStore): Promise<void> {
   await ensureWorkspace(ctx, root, policy)
