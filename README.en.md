@@ -100,9 +100,9 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # or github:lilyblessing/dsh-mcp-pane
 4. **Preset scope** (collapsible): All presets / Only these / All except + a preset multi-select. Deleted preset ids are marked "no longer exists" but never silently dropped from your config
 5. **Tools** (collapsible): enable/disable individual tools of that server
 6. **Apply timing**: switch between "Immediate" and "Next session"; pending intents in the latter can be forced with "Apply pending now"
-7. **Add MCP**: paste `mcpServers` JSON, pick the global/project target, confirm
+7. **Add MCP**: the "Add" button at the top right → paste `mcpServers` JSON, pick the global/project target, confirm
 8. **Edit / delete**: each card has Edit and Delete at the bottom right. Editing rewrites the row's own config source (global rows → profile patch, project rows → `.dsh/mcps/mcp.json`); deleting asks for confirmation. Rows declared in an agent preset composition (`agent.cordis.yml`) show a "Read-only" badge and disable both buttons (see the write-back matrix below for why)
-9. **Import from other agents**: top-right button → auto-scan known sources → tick the servers to bring over (custom JSON paths can be added) → choose target and level → confirm
+9. **Import from other agents**: the "Import" button at the top right → auto-scan known sources → tick the servers to bring over (custom JSON paths can be added) → choose target and level → confirm
 
 > Status badges: 🟢 Running (has tools) / ⚪ Stopped (level is hidden or off) / 🟡 No tools (process up, tool list empty) / 🔴 Not running (expected to run but the process is down — usually a failed server start).
 

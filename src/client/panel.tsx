@@ -414,15 +414,17 @@ export function McpPanelSection(props: Props): React.ReactElement {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" style={C.refresh} onClick={() => setShowAdd(true)}>
-            {t('mp.addMcp')}
+          {/* 按钮文字保持简短，完整说明放在 title（悬停可见） */}
+          <button type="button" style={C.refresh} title={t('mp.addBtnHint')} onClick={() => setShowAdd(true)}>
+            {t('mp.addBtn')}
           </button>
-          <button type="button" style={C.refresh} onClick={() => setShowImport(true)}>
-            {t('mp.importTitle')}
+          <button type="button" style={C.refresh} title={t('mp.importBtnHint')} onClick={() => setShowImport(true)}>
+            {t('mp.importBtn')}
           </button>
           <button
             type="button"
             style={C.refresh}
+            title={t('mp.refreshHint')}
             onClick={() => {
               void flush()
               load()

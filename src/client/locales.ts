@@ -79,6 +79,12 @@ export const en: Record<string, string> = {
   'mp.projectBadge': 'Project',
   'mp.enable': 'Enable',
   'mp.disable': 'Disable',
+  // toolbar buttons (brief labels; full wording lives in the tooltips)
+  'mp.addBtn': 'Add',
+  'mp.addBtnHint': 'Add an MCP server by pasting mcpServers JSON (global or project target)',
+  'mp.importBtn': 'Import',
+  'mp.importBtnHint': "Scan this machine's other agent configs (opencode / zcode / Claude Code / Cursor / Gemini CLI / project .mcp.json) and import selected servers",
+  'mp.refreshHint': 'Reload the panel data',
   // add MCP (quick migration)
   'mp.addMcp': 'Add MCP',
   'mp.addMcpPasteHint': 'Paste mcpServers JSON from another harness (e.g. Claude Code .mcp.json), then preview and confirm.',
@@ -211,6 +217,12 @@ export const zh: Record<string, string> = {
   'mp.projectBadge': '项目',
   'mp.enable': '启用',
   'mp.disable': '禁用',
+  // 顶部按钮（文字简短，完整说明在悬停提示里）
+  'mp.addBtn': '添加',
+  'mp.addBtnHint': '粘贴 mcpServers JSON 添加一个 MCP（可选全局或项目目标）',
+  'mp.importBtn': '导入',
+  'mp.importBtnHint': '扫描本机其它 agent 的配置（opencode / zcode / Claude Code / Cursor / Gemini CLI / 项目 .mcp.json），勾选后导入',
+  'mp.refreshHint': '重新拉取面板数据',
   // 添加 MCP（快速迁移）
   'mp.addMcp': '添加 MCP',
   'mp.addMcpPasteHint': '粘贴其它 harness 的 mcpServers JSON（如 Claude Code 的 .mcp.json），转换预览后确认添加。',
