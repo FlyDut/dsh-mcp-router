@@ -149,7 +149,7 @@ export const en: Record<string, string> = {
 }
 
 export const zh: Record<string, string> = {
-  'mp.nav': 'MCP 管理面板',
+  'mp.nav': 'MCP',
   'mp.refresh': '刷新',
   'mp.loading': '加载中…',
   'mp.empty': '未发现 MCP 服务器',

@@ -1,5 +1,5 @@
 <p align="center">
-  <strong style="font-size: 2.2em">🧩 MCP 管理面板</strong><br>
+  <strong style="font-size: 2.2em">🧩 MCP</strong><br>
   <span style="font-size: 1.1em">DeepSeek Harness（DSH）Web 插件 · 每个 MCP 四档曝光 · 按 agent 预设做运行时隔离 · 按需调用不占上下文</span>
 </p>
 
@@ -20,7 +20,7 @@
 
 全注入会吃掉上下文，全关掉又用不上 —— 所以这里把「这个 MCP 对模型曝光多少」做成每服务器一个档位，把「哪些会话能用」做成预设关联；不被注入的 MCP 由 `mcp_search` / `mcp_call` 按需调用。
 
-![MCP 管理面板](docs/images/mcp-panel.jpg)
+![MCP](docs/images/mcp-panel.jpg)
 
 > 上图为 v0.5 的界面（启停开关 + 中间层开关）；v0.6 起改为每张卡片的四档选择器 + 预设关联折叠区。
 
@@ -69,7 +69,7 @@
 dsh plugin --profile web add "github:lilyblessing/dsh-mcp-panel#main"
 ```
 
-产物已入库（`lib/`），git 源一行安装，无需构建授权。安装后**重启 `dsh web`**（bundle 层在启动时合成，热更新无效），设置页即出现「MCP 管理面板」入口。
+产物已入库（`lib/`），git 源一行安装，无需构建授权。安装后**重启 `dsh web`**（bundle 层在启动时合成，热更新无效），设置页即出现「MCP」入口。
 
 > 📦 已发布到 **npm**：`dsh-mcp-panel`（[npm 页面](https://www.npmjs.com/package/dsh-mcp-panel)）。npm 版为预构建产物，安装可跳过 `allowBuilds` 构建授权。
 >
@@ -77,7 +77,7 @@ dsh plugin --profile web add "github:lilyblessing/dsh-mcp-panel#main"
 
 ### 从 0.5.x（dsh-mcp-skill-panel）升级
 
-1. **技能功能已整体移除**（技能请交给你的技能管理插件）；面板入口从「MCP 与技能管理面板」变为「MCP 管理面板」。
+1. **技能功能已整体移除**（技能请交给你的技能管理插件）；面板入口从「MCP 与技能管理面板」变为「MCP」。
 2. **包名与挂载 id 变更**，profile 需重装一次：
 
 ```sh
@@ -98,7 +98,7 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # 或 github:lilyblessing/dsh-mcp-pan
 
 ## 🚀 使用
 
-1. 设置页 → **MCP 管理面板**
+1. 设置页 → **MCP**
 2. 每张卡片：服务器名、状态徽标、**四档选择器**、统计（工具数、token 估算、传输方式、工作区）
 3. **档位选择器**：原生注入 / 仅名称 / 隐藏 / 关闭 —— 点击即改（立即生效模式会提示缓存代价）
 4. **预设关联**（折叠区）：全部预设 / 仅以下预设 / 排除以下预设 + 预设多选；已删除的预设 id 标注「已不存在」，但不自动清理你的配置
@@ -201,7 +201,7 @@ sequenceDiagram
 
 | 检查项 | 操作 | 预期 |
 | --- | --- | --- |
-| 面板入口 | 重启后打开设置页 | 出现「MCP 管理面板」，四档选择器可见，zh/en 跟随界面语言 |
+| 面板入口 | 重启后打开设置页 | 出现「MCP」，四档选择器可见，zh/en 跟随界面语言 |
 | 原生注入 | 某 server 设为「原生注入」 | 工具出现在模型上下文；`mcp_search` 摘要标注「已直接注入」 |
 | 仅名称 | 切到「仅名称」 | 上下文只剩一行「服务器名 + 摘要」；`mcp_call` 不传工具名返回该 server 工具清单 |
 | 隐藏 | 切到「隐藏」 | 工具从上下文消失、进程停用；`mcp_search` 能检索到；`mcp_call` 能调用（空闲后回收） |
@@ -261,7 +261,7 @@ node scripts/selftest-mcp.mjs        # catalog 检索 / 组合文件文本 / 项
 - **`mcp_call` 支持只传 server**：工具名未知/为空时返回该服务器的工具清单（「仅名称」档位的发现路径）
 - **`mcp_search` 摘要按档位分层**：列出原生注入与仅名称的服务器，隐藏的只给计数提示，关闭与预设隔离的完全不出现
 - **架构重排**：三个各自过滤 `system-prompt/assemble` 的模块合并为单一装配层；live 行与 preset 行的两套构建路径归一为注册表；意图/生效两份表取代 desired/lastApplied/pending 多轨状态
-- **改名**：包名与挂载 id → `dsh-mcp-panel`（入口「MCP 管理面板」，HTTP 前缀 `/api/mcp-panel`，旧前缀兼容）
+- **改名**：包名与挂载 id → `dsh-mcp-panel`（入口「MCP」，HTTP 前缀 `/api/mcp-panel`，旧前缀兼容）
 - **自动迁移**：数据目录（`dsh-mcp-skill-panel` → `dsh-mcp-panel`）与 state.json v1 → v2，迁移前备份 `state.v1.json`
 
 ### v0.5.x 及更早

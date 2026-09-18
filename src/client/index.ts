@@ -1,5 +1,5 @@
 /**
- * Client 半区入口：注册 settings.section「MCP 管理面板」页。
+ * Client 半区入口：注册 settings.section「MCP」页。
  * 参考 ui-settings-plugins 的 settings.section 注册形态（id/order/label/locale 必带）。
  *
  * 平台类型（slots/locale）在本仓库无闭包类型可用，这里声明最小契约（P2-3 可维护性

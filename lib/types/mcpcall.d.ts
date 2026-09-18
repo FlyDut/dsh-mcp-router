@@ -30,9 +30,14 @@ export interface McpAccess {
  */
 export declare function normalizeToolName(serverName: string, toolName: string): string;
 /**
- * 归一化 mcp_call 的 arguments 参数（2026-08-24 修补）：type:'json' 参数的编译产物
- * 不带 type 标注，模型直连 Tool call 时倾向把参数字典填成 JSON 字符串（实测 flash 与
- * mimo 两系均会出现）。这里循环安全解析为对象后再透传：
+ * 归一化 mcp_call 的 arguments 参数（2026-08-24 修补）：模型直连 Tool call 时倾向把
+ * 参数字典填成 JSON 字符串（实测 flash 与 mimo 两系均会出现）。这里循环安全解析为对象
+ * 后再透传。
+ *
+ * 2026-09-18：arguments 的 schema 已改为 oneOf[object, string]（见 registerMcpCallTool），
+ * 其中 string 分支专为保留下面的兼容路径而存在——不能删掉该分支，否则字符串入参会先在
+ * defineTool 的校验阶段被拒，本函数永远轮不到执行。object 分支已在执行前挡掉
+ * [] / 42 / null 等错误形态，因此这里只需处理「字符串 → 对象」这一种转换：
  * - 值以 { / [ 开头 → 直接按容器 JSON 解析；
  * - 值以 " 开头（引号包裹层）→ 解包后若内层仍是容器形态才继续剥，防止误改合法标量入参；
  * - 解析失败或非字典形态 → 保留原值交由远端给出可读错误。

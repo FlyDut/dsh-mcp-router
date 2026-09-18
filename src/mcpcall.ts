@@ -78,9 +78,14 @@ export function normalizeToolName(serverName: string, toolName: string): string 
 }
 
 /**
- * 归一化 mcp_call 的 arguments 参数（2026-08-24 修补）：type:'json' 参数的编译产物
- * 不带 type 标注，模型直连 Tool call 时倾向把参数字典填成 JSON 字符串（实测 flash 与
- * mimo 两系均会出现）。这里循环安全解析为对象后再透传：
+ * 归一化 mcp_call 的 arguments 参数（2026-08-24 修补）：模型直连 Tool call 时倾向把
+ * 参数字典填成 JSON 字符串（实测 flash 与 mimo 两系均会出现）。这里循环安全解析为对象
+ * 后再透传。
+ *
+ * 2026-09-18：arguments 的 schema 已改为 oneOf[object, string]（见 registerMcpCallTool），
+ * 其中 string 分支专为保留下面的兼容路径而存在——不能删掉该分支，否则字符串入参会先在
+ * defineTool 的校验阶段被拒，本函数永远轮不到执行。object 分支已在执行前挡掉
+ * [] / 42 / null 等错误形态，因此这里只需处理「字符串 → 对象」这一种转换：
  * - 值以 { / [ 开头 → 直接按容器 JSON 解析；
  * - 值以 " 开头（引号包裹层）→ 解包后若内层仍是容器形态才继续剥，防止误改合法标量入参；
  * - 解析失败或非字典形态 → 保留原值交由远端给出可读错误。
@@ -364,12 +369,12 @@ function blockedText(serverName: string, access: McpAccess): string {
     case 'preset':
       return (
         `MCP server "${serverName}" 未对当前 agent 预设（${access.presetId ?? '无预设'}）开放；` +
-        `如需使用，请在 MCP 管理面板调整该服务器的预设关联。`
+        `如需使用，请在 MCP 调整该服务器的预设关联。`
       )
     case 'exposure':
       return (
         `MCP server "${serverName}" 已被设为「彻底关闭」（off），不可调用；` +
-        `如需使用，请在 MCP 管理面板把它的状态改为「原生注入 / 仅名称 / 隐藏」。`
+        `如需使用，请在 MCP 把它的状态改为「原生注入 / 仅名称 / 隐藏」。`
       )
     case 'workspace':
       return `MCP server "${serverName}" 属于另一个工作空间的项目级配置，仅该工作空间的会话可用。`
@@ -488,7 +493,7 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
       const name = `mcp__${serverName}__${bareTool}`
       // ③ 工具级禁用（面板指定关闭）：拒绝并提示可经面板重新开启
       if (policyDisablesTool(access.policy, name)) {
-        return `MCP 工具 ${serverName}.${bareTool} 已被禁用（请在 MCP 管理面板打开该工具后再调用）`
+        return `MCP 工具 ${serverName}.${bareTool} 已被禁用（请在 MCP 打开该工具后再调用）`
       }
 
       const entry = caches.resolveEntry(serverName)
@@ -509,7 +514,7 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
       } else if (!ref || !ref.running || ref.disabled) {
         return (
           `MCP server "${serverName}" 当前未运行，且它的行不在 loader 中（预设组合行）——` +
-          `无法即时保活启用。请在 MCP 管理面板把它切换为「原生注入」或「仅名称」后重启 DSH 生效。`
+          `无法即时保活启用。请在 MCP 把它切换为「原生注入」或「仅名称」后重启 DSH 生效。`
         )
       }
 
@@ -695,7 +700,22 @@ function registerMcpCallTool(ctx: Context, controller: McpCallController): () =>
     parameters: {
       server: { type: 'string', required: true, description: 'MCP 服务器名（见 mcp_search 摘要）' },
       tool: { type: 'string', required: true, description: '该 server 上的工具名（裸名，如 understand_image；误传注册全名 mcp__<server>__<tool> 会自动归一化）' },
-      arguments: { type: 'json', description: '传给远端工具的参数字典；必须传 JSON 对象本身，不要传 JSON 字符串（兼容：误传字符串会自动解析）' },
+      // 2026-09-18：原为 { type: 'json' }，编译后只剩 description、不带任何 type，
+      // 等于没给模型引导：实测 [] 与 42 都能通过校验，模型也更容易整个跳过该字段。
+      // 这里用 oneOf[object, string]：object 分支给出明确的对象引导，string 分支
+      // 保留 normalizeArguments 的 JSON 字符串兼容路径（flash 系确实会传字符串）；
+      // 同时把 [] / 42 / null 这类错误形态在执行前拒掉。
+      // 注意：不能直接写成裸 { type: 'object' }，那会让字符串兼容路径在 defineTool
+      // 的校验阶段就被拒（校验发生在 execute 之前，normalizeArguments 根本轮不到执行）。
+      arguments: {
+        oneOf: [
+          { type: 'object', additionalProperties: true },
+          { type: 'string' },
+        ],
+        description:
+          '传给工具的参数字典（JSON 对象，如 {"url":"https://example.com"}）。' +
+          '无参数工具可省略本字段或传 {}。',
+      },
     },
     output: {
       schema: { type: 'string' },
