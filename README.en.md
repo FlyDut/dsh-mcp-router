@@ -9,7 +9,7 @@
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.0-green.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.7.0-green.svg">
 </p>
 
 ---
@@ -18,13 +18,13 @@
 
 A settings panel that gives every MCP server an **exposure level** (how much of it enters the context) and a **preset scope** (which sessions may use it).
 
-Injecting everything eats your context; turning everything off makes MCPs useless when you need them. So "how much does this MCP expose to the model" becomes one level per server, and "which sessions may use it" becomes a preset scope. Servers that are not injected stay reachable on demand through `mcp_search` / `mcp_call`.
+Injecting everything eats your context; turning everything off makes MCPs useless when you need them. So "how much does this MCP expose to the model" becomes one level per server, and "which sessions may use it" becomes a preset scope. Servers that are not injected stay reachable on demand through `dsh_mcp_search` / `dsh_mcp_call`.
 
 ![MCP panel](docs/images/mcp-panel.jpg)
 
 ## 🎚️ Four exposure levels
 
-| Level | Process | Context injection | `mcp_search` | `mcp_call` |
+| Level | Process | Context injection | `dsh_mcp_search` | `dsh_mcp_call` |
 | --- | --- | --- | --- | --- |
 | **Native** `native` | running | every `mcp__<server>__*` tool schema | listed in the summary (marked injected) | callable |
 | **Name only** `name-only` | running | just one line: server name + summary | listed in the summary | callable (omit the tool name to get the tool list) |
@@ -41,7 +41,7 @@ A level decides two things at once: **whether the process runs** (native/name-on
 | Only these `only` | available only to the listed presets | unavailable |
 | All except `except` | available to every other preset | available |
 
-A preset-isolated server **keeps running in the background**: sessions on other presets cannot see it, `mcp_search` does not return it, and `mcp_call` refuses it. All three checks share one function, so you never get "visible but uncallable" or the reverse.
+A preset-isolated server **keeps running in the background**: sessions on other presets cannot see it, `dsh_mcp_search` does not return it, and `dsh_mcp_call` refuses it. All three checks share one function, so you never get "visible but uncallable" or the reverse.
 
 > This is exactly the "one session uses this MCP, another does not" case — without toggling processes back and forth and without a restart.
 
@@ -49,7 +49,7 @@ A preset-isolated server **keeps running in the background**: sessions on other 
 
 | Capability | Detail |
 | --- | --- |
-| 🤖 **Always-on middle layer** | `mcp_search` (catalog retrieval) + `mcp_call` (keep-alive enable → call → idle reap); an unknown tool name makes `mcp_call` return that server's tool list |
+| 🤖 **Always-on middle layer** | `dsh_mcp_search` (catalog retrieval) + `dsh_mcp_call` (keep-alive enable → call → idle reap); an unknown tool name makes `dsh_mcp_call` return that server's tool list |
 | 🛠️ **Per-tool disable** | Fine-grained control above the server level; disabled tools leave retrieval and are refused on call |
 | 📊 **Stopped-state backfill** | Hidden/off servers still show "N tools, ~N tokens" from the private last-good catalog snapshot |
 | 📁 **Project-level MCP** | Reads `<workspace>/.dsh/mcps/**/mcp.json`, visible **only to sessions of that workspace**; hot-reloaded on file change |
@@ -115,18 +115,21 @@ Prefix `/api/mcp-panel` (the legacy prefixes `/api/mcp-skill-panel` and `/api/ru
 | GET | `/state?session=<id>` | Panel view (registry rows × policy × effective level after preset isolation) |
 | GET | `/presets?session=<id>` | Agent presets available for scoping |
 | POST | `/policy` | `{ updates: [{ serverName, workspace?, exposure?, presets?, disabledTools? }] }` batch policy write |
-| POST | `/policy/commit` | Force pending "next session" intents to take effect now (costs a cache miss) |
+| POST | `/policy/commit` | Force pending "next session" intents to take effect now (**requires body `{ confirm: true }`**, otherwise 400; costs a cache miss) |
 | POST | `/mcp/toolToggle` | `{ serverName, workspace?, toolName, disabled }` per-tool disable |
-| GET | `/mcp/detail?serverName=&workspace=` | Edit-form seed: writable target, current config, dynamic (`!!js`) key list |
-| POST | `/mcp/update` | `{ serverName, workspace?, patch: {…} }` edit and write back to the config source |
+| POST | `/mcp/toolBulk` | `{ serverName, workspace?, disabled, toolNames? }` per-tool **bulk** toggle. `toolNames` is a **three-state contract**: omitted = every tool of that server (the only way to mean "all"); an array = exact set (`[]` is a valid no-op); a non-array, or a non-empty array matching nothing → 400 (never silently degraded to "all" — the panel's "bulk by filter" sends `[]` whenever the filter matches nothing). The response carries `changed` and `ignoredToolNames` (named tools absent from the current directory, making catalogue drift visible) |
+| GET | `/mcp/detail?serverName=&workspace=` | Edit-form seed: writable target, current config, dynamic (`!!js`) key list; **`env`/`headers` values are masked as `***MASKED***`** (keys preserved) |
+| POST | `/mcp/update` | `{ serverName, workspace?, patch: {…} }` edit and write back to the config source; a masked value means "keep the current one" |
 | POST | `/mcp/remove` | `{ serverName, workspace? }` delete (preset composition rows return 400 with the alternative) |
-| POST | `/mcp/scan` | `{ paths?: string[] }` scan other agents' MCP configs (read-only; built-in list + custom paths) |
+| POST | `/mcp/scan` | `{ paths?: string[] }` scan other agents' MCP configs (read-only; built-in list + custom paths; token required, and **deliberately not masked** because its only purpose is importing the result verbatim) |
 | GET / POST | `/config` | Read / write apply timing |
 | POST | `/mcp/preview`, `/mcp/add` | Quick migration preview / add |
 | GET | `/debug`, POST `/debug/collect` | Diagnostics |
 | GET | `/token` | Process-scoped random token (the panel sends it as `x-panel-token`) |
 
 > **Write authorization**: every POST must carry `x-panel-token` matching the process token, otherwise 401 — this blocks cross-origin / DNS-rebinding blind writes to the local control endpoints. GET read endpoints stay open.
+> **Escape-hatch confirmation**: `POST /policy/commit` additionally requires body `{ confirm: true }` (400 otherwise). It is the only exit from the next-session "zero cache invalidation" promise — without the gate, any script or model could void that promise with a bare POST (the next turn misses the whole prefix cache), and the result would look exactly like a user-initiated click. The panel button confirms first, too.
+> **Masking and "sentinel means keep"**: `env`/`headers` values are masked in `GET /mcp/detail`; the write path interprets the sentinel as "keep the current value" (restore when a live value exists, drop the key otherwise). The pair is what lets the panel round-trip a whole form without losing secrets or writing the sentinel into the config.
 
 ## ⚙️ How it works
 
@@ -149,11 +152,11 @@ Prefix `/api/mcp-panel` (the legacy prefixes `/api/mcp-skill-panel` and `/api/ru
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**One decision function** shared by the assembly filter, `mcp_search`, `mcp_call` and the panel badges — `decideExposure({ policy, running, aiActive, presetId })`:
+**One decision function** shared by the assembly filter, `dsh_mcp_search`, `dsh_mcp_call` and the panel badges — `decideExposure({ policy, running, aiActive, presetId })`:
 
 1. preset not allowed → `off` (runtime isolation; physical state untouched)
 2. `off` / `hidden` → as configured
-3. `native` / `name-only`: process running and not inside an AI keep-alive window → as configured; otherwise degrade to `hidden` (tools stay out of context, `mcp_call` still works — capability is never silently lost)
+3. `native` / `name-only`: process running and not inside an AI keep-alive window → as configured; otherwise degrade to `hidden` (tools stay out of context, `dsh_mcp_call` still works — capability is never silently lost)
 
 **Config write-back matrix** (where edit/delete actually write):
 
@@ -183,16 +186,31 @@ Writes always hit the file first and the runtime second — the other order leav
 
 ```sh
 pnpm install
-pnpm setup          # junction the DSH closure into node_modules (type resolution)
+pnpm setup          # link the DSH closure into node_modules (junction on Windows, symlink on POSIX)
 pnpm typecheck
 pnpm build          # tsdown → lib/*.js + tsc dts → lib/types
-pnpm verify         # artifact checks (externals, entries, client wrapper)
-node scripts/selftest-exposure.mjs   # domain logic: levels / preset scope / migration / sync rules
-node scripts/selftest-policy.mjs     # policy store end-to-end: dir move / v1→v2 / apply timing (temp HOME)
-node scripts/selftest-mcp.mjs        # catalog search / composition text / project scan / JSON conversion
+pnpm verify         # artifact checks (externals, entries, client wrapper, dependency-free pure bundles)
+pnpm selftest       # run all 6 self-tests (or pnpm selftest:mcp etc. individually)
 ```
 
 ## 📋 Changelog
+
+### v0.7.0 — context-bloat control + a batch of real bug fixes (equivalent ports from upstream 0.5.7–0.6.0)
+
+This release does not merge the upstream branch (upstream 0.6.0 still carries the skill panel plus the gateway/standing-row architecture). Instead it ports the upstream fixes and two high-value optimisations one by one:
+
+- **⚠️ Breaking: control tools renamed** `mcp_search` → `dsh_mcp_search`, `mcp_call` → `dsh_mcp_call`. Reason: the claude.ai subscription gateway treats the `mcp_` prefix as a reserved connector name — a tool table containing those two names makes the **whole request 400** with a bogus quota-exhausted error (upstream A/B/A evidence: 5/5 requests failed with them, 111/111 succeeded without). The names now come from `MCP_SEARCH_TOOL` / `MCP_CALL_TOOL`, with a self-test guard "must not start with `mcp_`"
+- **`dsh_mcp_search` layered retrieval**: `server=X` returns a **capability summary** (visible total + first 5 bare names) by default; `all:true` returns the full list, paginated (20 per page, max 100); a new `query + server` searches **inside one server**. Previously a 420-tool server dumped the whole table into context, bloating then shrinking it and breaking the prefix cache
+- **Snapshot/prune now cover preset rows**: `snapshotEnabled` used to walk only the loader, while preset standing rows are not in it — so their tool catalogue was never captured, and the prune `alive` set could delete their last-good snapshot. It now works off the registry snapshot (loader ∪ preset ∪ project)
+- **Honest reporting for unregistered rows**: when a process runs but registers zero tools, the tool/token counts show 0 with a new "Not registered" badge instead of being backfilled from the directory snapshot
+- **`/mcp/add` dedup covers preset rows**: it used to check only the loader plus patch text, so an already-installed preset server was considered absent and a duplicate row was written (same-scope serverName conflict)
+- **Masked echo**: `GET /mcp/detail` masks `env`/`headers` values as `***MASKED***`; the write path treats the sentinel as "keep the current value" (implemented as a pair, so the panel's whole-form round-trip neither loses secrets nor writes the sentinel). `/mcp/scan` is deliberately not masked (token-gated, and its purpose is verbatim import)
+- **`readBody` hardening**: `StringDecoder` decodes chunk by chunk (multi-byte characters split across chunks no longer mojibake); on overflow it detaches listeners and drains instead of destroying the socket (which used to make the 400 unreachable)
+- **Escape-hatch confirmation**: `POST /policy/commit` requires `{ confirm: true }` (the panel confirms too). A bare POST used to let any script or model void the next-session "zero cache invalidation" promise
+- **Per-tool bulk toggle**: new `POST /mcp/toolBulk` (three-state `toolNames` contract — `[]` is never "all") plus a filter box and bulk buttons in the panel; one write instead of N `toolToggle` writes
+- **Session passthrough**: panel requests now carry the current session (`?session=`). They used to omit it entirely, so the host resolved `roots[0]` — with several sessions open the cards showed the session from startup time
+- **Tooling**: `pnpm setup` now works on POSIX (it used to shell out to Windows `mklink /J` only); the 6 self-tests are wired as `pnpm selftest` and into `prepublishOnly`
+- **Drive-by fix**: bare tool-name rendering (`^mcp__[^_]+__` left a prefix behind for server names containing underscores)
 
 ### v0.6.1 — edit / delete / import from other agents
 
@@ -208,9 +226,9 @@ node scripts/selftest-mcp.mjs        # catalog search / composition text / proje
 
 - **Skill feature removed**; the plugin is now a single control plane for MCP visibility and usability
 - **Four levels** replace "enable/disable + global autoManage": native / name-only / hidden / off
-- **Preset scope** (runtime isolation): `all` / `only` / `except` + multi-select, enforced identically in assembly, `mcp_search` and `mcp_call`, with the process left running
-- **`mcp_call` accepts a server alone** and returns its tool list when the tool name is unknown
-- **`mcp_search` layering**: lists native + name-only servers, counts hidden ones, hides off/isolated ones entirely
+- **Preset scope** (runtime isolation): `all` / `only` / `except` + multi-select, enforced identically in assembly, `dsh_mcp_search` and `dsh_mcp_call`, with the process left running
+- **`dsh_mcp_call` accepts a server alone** and returns its tool list when the tool name is unknown
+- **`dsh_mcp_search` layering**: lists native + name-only servers, counts hidden ones, hides off/isolated ones entirely
 - **Architecture**: three separate `system-prompt/assemble` filters merged into one assembly layer; the live-row and preset-row build paths unified into a registry; intent/effective policy tables replace the desired/lastApplied/pending state tangle
 - **Renamed** to `dsh-mcp-panel` (entry "MCP Manager", HTTP prefix `/api/mcp-panel`, legacy prefixes kept)
 - **Automatic migration** of the data directory and of `state.json` v1 → v2, with a `state.v1.json` backup

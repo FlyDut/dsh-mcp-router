@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-panel",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "MCP：四档曝光（原生注入 / 仅名称 / 隐藏 / 关闭）+ 按 agent 预设做运行时隔离，支持编辑/删除 MCP 配置与从其它 agent（opencode / zcode / Claude Code 等）一键导入。",
   "type": "module",
   "main": "./lib/index.js",
@@ -38,7 +38,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "build": "node scripts/build.mjs",
     "verify": "node scripts/verify.mjs",
-    "prepublishOnly": "npm run build && npm run verify"
+    "selftest:exposure": "node scripts/selftest-exposure.mjs",
+    "selftest:composition": "node scripts/selftest-composition-file.mjs",
+    "selftest:import": "node scripts/selftest-external-import.mjs",
+    "selftest:policy": "node scripts/selftest-policy.mjs",
+    "selftest:edit": "node scripts/selftest-mcp-edit.mjs",
+    "selftest:mcp": "node scripts/selftest-mcp.mjs",
+    "selftest": "npm run selftest:exposure && npm run selftest:composition && npm run selftest:import && npm run selftest:policy && npm run selftest:edit && npm run selftest:mcp",
+    "prepublishOnly": "npm run build && npm run verify && npm run selftest"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

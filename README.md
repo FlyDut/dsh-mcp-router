@@ -9,7 +9,7 @@
 
 <p align="center">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.6.0-green.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.7.0-green.svg">
 </p>
 
 ---
@@ -18,7 +18,7 @@
 
 一个设置页面板，为每个 MCP 服务器选择**曝光档位**（进多少上下文）与**预设关联**（哪些会话能用）。
 
-全注入会吃掉上下文，全关掉又用不上 —— 所以这里把「这个 MCP 对模型曝光多少」做成每服务器一个档位，把「哪些会话能用」做成预设关联；不被注入的 MCP 由 `mcp_search` / `mcp_call` 按需调用。
+全注入会吃掉上下文，全关掉又用不上 —— 所以这里把「这个 MCP 对模型曝光多少」做成每服务器一个档位，把「哪些会话能用」做成预设关联；不被注入的 MCP 由 `dsh_mcp_search` / `dsh_mcp_call` 按需调用。
 
 ![MCP](docs/images/mcp-panel.jpg)
 
@@ -26,7 +26,7 @@
 
 ## 🎚️ 四个档位
 
-| 档位 | 进程 | 上下文注入 | `mcp_search` | `mcp_call` |
+| 档位 | 进程 | 上下文注入 | `dsh_mcp_search` | `dsh_mcp_call` |
 | --- | --- | --- | --- | --- |
 | **原生注入** `native` | 运行 | 全部 `mcp__<server>__*` 工具 schema | 摘要表列出（标注已注入） | 可调用 |
 | **仅名称** `name-only` | 运行 | 只有一行「服务器名 + 摘要」索引 | 摘要表列出 | 可调用（不传工具名即返回工具清单） |
@@ -43,7 +43,7 @@
 | 仅以下预设 `only` | 只有列出的预设可用 | 不可用 |
 | 排除以下预设 `except` | 除列出的预设外可用 | 可用 |
 
-被预设隔离的服务器**仍在后台运行**：其他预设的会话看不到它、`mcp_search` 不返回它、`mcp_call` 拒绝调用。三处判定共用同一个函数，不会出现「看得到调不动」或「调得动看不到」的错位。
+被预设隔离的服务器**仍在后台运行**：其他预设的会话看不到它、`dsh_mcp_search` 不返回它、`dsh_mcp_call` 拒绝调用。三处判定共用同一个函数，不会出现「看得到调不动」或「调得动看不到」的错位。
 
 > 这解决的正是「一个会话用某 MCP、另一个会话不用」的场景 —— 不必为不同会话反复开关进程，也不必重启。
 
@@ -51,7 +51,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 🤖 **AI 中间层常驻** | `mcp_search`（检索私有目录）+ `mcp_call`（保活启用 → 调用 → 空闲回收）；工具名未知时 `mcp_call` 直接返回该服务器工具清单 |
+| 🤖 **AI 中间层常驻** | `dsh_mcp_search`（检索私有目录）+ `dsh_mcp_call`（保活启用 → 调用 → 空闲回收）；工具名未知时 `dsh_mcp_call` 直接返回该服务器工具清单 |
 | 🛠️ **工具级禁用** | server 档位之上按工具精确控制；被禁工具不进检索、调用直接拒绝 |
 | 📊 **停用态回填** | 停用/隐藏的服务器仍显示「目录中有多少工具、约多少 token」（私有 catalog last-good 快照） |
 | 📁 **项目级 MCP** | 读取 `<工作空间>/.dsh/mcps/**/mcp.json`，**仅该项目工作空间的会话可见**；文件改动热更新 |
@@ -119,12 +119,13 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # 或 github:lilyblessing/dsh-mcp-pan
 | GET | `/state?session=<id>` | 面板视图（注册表行 × 策略 × 预设隔离后的生效档位） |
 | GET | `/presets?session=<id>` | 可关联的 agent 预设列表 |
 | POST | `/policy` | `{ updates: [{ serverName, workspace?, exposure?, presets?, disabledTools? }] }` 批量写策略 |
-| POST | `/policy/commit` | 立即应用「下次会话生效」模式积压的意图（有缓存代价） |
+| POST | `/policy/commit` | 立即应用「下次会话生效」模式积压的意图（**需 body `{ confirm: true }`**，缺了即 400；有缓存代价） |
 | POST | `/mcp/toolToggle` | `{ serverName, workspace?, toolName, disabled }` 工具级禁用 |
-| GET | `/mcp/detail?serverName=&workspace=` | 编辑弹窗初值：可写目标、当前配置、动态（`!!js`）键清单 |
+| POST | `/mcp/toolBulk` | `{ serverName, workspace?, disabled, toolNames? }` 工具级**批量**启停。`toolNames` **三态**：省略该字段 = 该 server 全部工具（唯一表示全体的形态）；数组 = 精确集合（`[]` 是合法空操作）；非数组、或非空却一条都不匹配 → 400（不静默降级为「全部」，否则面板「按过滤批量」命中 0 项时会全量禁用）。响应含 `changed` 与 `ignoredToolNames`（点名了但不在当前目录里的项，目录漂移可见化） |
+| GET | `/mcp/detail?serverName=&workspace=` | 编辑弹窗初值：可写目标、当前配置、动态（`!!js`）键清单；`env`/`headers` 的**值以 `***MASKED***` 脱敏回显**（键名保留） |
 | POST | `/mcp/update` | `{ serverName, workspace?, patch: { serverName?, transport?, command?, args?, env?, cwd?, url?, headers?, toolCallTimeoutMs? } }` 编辑并写回源文件 |
 | POST | `/mcp/remove` | `{ serverName, workspace? }` 删除（预设组合行返回 400 与替代做法） |
-| POST | `/mcp/scan` | `{ paths?: string[] }` 扫描其它 agent 的 MCP 配置（只读，内置清单 + 自定义路径） |
+| POST | `/mcp/scan` | `{ paths?: string[] }` 扫描其它 agent 的 MCP 配置（只读，内置清单 + 自定义路径；需令牌，且**刻意不脱敏** —— 它的用途就是把扫描结果原样导入） |
 | GET | `/config` | 读取生效时机与部署配置（middleLayer / defaultExposure） |
 | POST | `/config` | `{ applyMode: immediate\|next-session }` |
 | POST | `/mcp/preview` | `{ json }` 快速迁移预览（mcpServers JSON → 解析 + YAML patch 转换） |
@@ -134,6 +135,8 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # 或 github:lilyblessing/dsh-mcp-pan
 | GET | `/token` | 取本进程随机令牌（面板 POST 前自动获取并携带 `x-panel-token` 头） |
 
 > **写操作鉴权**：全部 POST 要求 `x-panel-token` 与本进程随机令牌一致，否则 401 —— 阻断跨源 / DNS-rebinding 对本地控制端点的盲写；GET 只读端点保持开放。
+> **逃生舱确认闸门**：`POST /policy/commit` 还要求 body `{ confirm: true }`，缺失即 400。它是 next-session「零缓存失效」承诺的唯一出口 —— 否则任何脚本/模型一发裸 POST 就能单方面作废该承诺（当轮工具集变化 → 下一轮 100% miss 前缀缓存），且外观与用户自己点击完全相同。面板按钮也改为二次确认后才带 `confirm`。
+> **脱敏与「哨兵即保留原值」**：`GET /mcp/detail` 的 `env`/`headers` 值以 `***MASKED***` 遮蔽；写侧 `POST /mcp/update` 把该哨兵解释为「保留原值」（有 live 真值则还原、live 里没有则丢弃）。两者成对，因此面板「读回来 → 整表单回写」既不会丢 secrets，也不会把哨兵写进配置文件。
 > **分域缓存**（60s TTL 兜底）由事件驱动精确失效：`tools/change` / `loader/partial-dispose` → 面板域与注册表。
 
 ## ⚙️ 工作原理
@@ -149,7 +152,7 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # 或 github:lilyblessing/dsh-mcp-pan
 ┌ runtime 运行时层 ────────────────────────────────────────────┐
 │  domain/registry.ts  三种来源 → 统一 ServerRef（同步快照）      │
 │  catalog.ts          工具目录快照 / 检索 / last-good 持久化     │
-│  mcpcall.ts          启停保活 + 空闲回收 + mcp_search/mcp_call │
+│  mcpcall.ts          启停保活 + 空闲回收 + dsh_mcp_search/dsh_mcp_call │
 └──────────────────────┬───────────────────────────────────────┘
 ┌ assembly 装配层（唯一注入点）─────────────────────────────────┐
 │  domain/assembly.ts  一个 system-prompt/assemble 监听器：       │
@@ -159,22 +162,22 @@ pnpm add "file:/path/to/dsh-mcp-panel"     # 或 github:lilyblessing/dsh-mcp-pan
 
 **三种 MCP 来源归一**：`ctx.loader.entries()`（profile patch 行 / 项目级 `projmcp-*` 行，同步）+ `ctx.agentPresets.compositionInventory()`（preset standing 行，rc.1 起不在 loader 里，异步刷新）+ 项目级 owner 表。装配发生在同步路径（waterfall 与 section provider 不能 await），因此注册表维护一份同步内存快照；快照未就绪时**保守放行**（保留工具），绝不误伤。
 
-**一个决策函数**：装配过滤、`mcp_search`、`mcp_call`、面板徽标共用 `decideExposure({ policy, running, aiActive, presetId })`：
+**一个决策函数**：装配过滤、`dsh_mcp_search`、`dsh_mcp_call`、面板徽标共用 `decideExposure({ policy, running, aiActive, presetId })`：
 
 1. 预设不允许 → `off`（运行时隔离，物理状态不变）
 2. `off` / `hidden` 档 → 原样
-3. `native` / `name-only` 档：进程在跑且非 AI 保活窗口 → 原档；否则降级为 `hidden`（工具不注入，但仍可 `mcp_call`，不静默丢能力）
+3. `native` / `name-only` 档：进程在跑且非 AI 保活窗口 → 原档；否则降级为 `hidden`（工具不注入，但仍可 `dsh_mcp_call`，不静默丢能力）
 
-**中间层调用链**（`mcp_call` 对隐藏的 server）：
+**中间层调用链**（`dsh_mcp_call` 对隐藏的 server）：
 
 ```mermaid
 sequenceDiagram
     participant M as 模型
-    participant P as 插件（mcp_call）
+    participant P as 插件（dsh_mcp_call）
     participant L as loader
     participant S as MCP server
 
-    M->>P: mcp_call(server, tool, args)
+    M->>P: dsh_mcp_call(server, tool, args)
     P->>P: 访问判定（预设隔离 / 关闭档直接拒绝）
     P->>L: entry.update({disabled:false})（记录 AI owner）
     L->>S: spawn / 重连
@@ -202,12 +205,15 @@ sequenceDiagram
 | 检查项 | 操作 | 预期 |
 | --- | --- | --- |
 | 面板入口 | 重启后打开设置页 | 出现「MCP」，四档选择器可见，zh/en 跟随界面语言 |
-| 原生注入 | 某 server 设为「原生注入」 | 工具出现在模型上下文；`mcp_search` 摘要标注「已直接注入」 |
-| 仅名称 | 切到「仅名称」 | 上下文只剩一行「服务器名 + 摘要」；`mcp_call` 不传工具名返回该 server 工具清单 |
-| 隐藏 | 切到「隐藏」 | 工具从上下文消失、进程停用；`mcp_search` 能检索到；`mcp_call` 能调用（空闲后回收） |
-| 关闭 | 切到「关闭」 | `mcp_search` 不返回、`mcp_call` 拒绝并提示 |
-| 预设隔离 | 某 server 关联「仅以下预设: coding」 | coding 会话正常；其他预设会话看不到工具、`mcp_call` 拒绝；进程仍在运行 |
-| 工具级禁用 | 展开工具列表禁用某工具 | 该工具从上下文与 `mcp_search` 消失，`mcp_call` 拒绝 |
+| 原生注入 | 某 server 设为「原生注入」 | 工具出现在模型上下文；`dsh_mcp_search` 摘要标注「已直接注入」 |
+| 仅名称 | 切到「仅名称」 | 上下文只剩一行「服务器名 + 摘要」；`dsh_mcp_call` 不传工具名返回该 server 工具清单 |
+| 隐藏 | 切到「隐藏」 | 工具从上下文消失、进程停用；`dsh_mcp_search` 能检索到；`dsh_mcp_call` 能调用（空闲后回收） |
+| 关闭 | 切到「关闭」 | `dsh_mcp_search` 不返回、`dsh_mcp_call` 拒绝并提示 |
+| 预设隔离 | 某 server 关联「仅以下预设: coding」 | coding 会话正常；其他预设会话看不到工具、`dsh_mcp_call` 拒绝；进程仍在运行 |
+| 工具级禁用 | 展开工具列表禁用某工具 | 该工具从上下文与 `dsh_mcp_search` 消失，`dsh_mcp_call` 拒绝 |
+| 工具级批量 | 展开工具列表，输入过滤词后点「禁用命中 N 个」 | 仅命中项被禁用（一次写盘）；点名但不在当前目录的项经回执说明被忽略 |
+| 未注册徽标 | 某 server 进程在跑但一个工具都没注册 | 显示「未注册」且工具数为 0 —— 不再用目录快照回填成"有工具" |
+| 会话跟随 | 多会话并存时切换会话再打开面板 | 卡片跟随**当前**会话（请求带 `?session=`），而不是启动期那个会话 |
 | 重启保持 | 改档位后重启 DSH | 档位与预设关联保持不变 |
 
 ## ⚠️ 已知限制
@@ -226,19 +232,36 @@ sequenceDiagram
 
 ```sh
 pnpm install
-pnpm setup          # 把 DSH 闭包 junction 进 node_modules（类型解析用）
+pnpm setup          # 把 DSH 闭包链接进 node_modules（Windows 用 junction，POSIX 用符号链接）
 pnpm typecheck      # tsc --noEmit
 pnpm build          # tsdown → lib/*.js + tsc dts → lib/types
-pnpm verify         # 产物校验（external 未内联 / 入口齐全 / client 包装）
-node scripts/selftest-exposure.mjs   # 领域纯逻辑：四档判定 / 预设隔离 / 迁移 / 物化规则
-node scripts/selftest-policy.mjs     # 策略层端到端：目录搬迁 / v1→v2 迁移 / 生效时机（临时 HOME）
-node scripts/selftest-mcp.mjs        # catalog 检索 / 组合文件文本 / 项目扫描 / JSON 转换
+pnpm verify         # 产物校验（external 未内联 / 入口齐全 / client 包装 / 纯逻辑产物依赖自由）
+pnpm selftest       # 一次跑全部 6 个自测（也可单独 pnpm selftest:mcp 等）
 ```
 
+自测分工：`selftest-exposure`（四档判定 / 预设隔离 / 迁移 / 物化规则 / 工具批量三态契约）、`selftest-policy`（策略层端到端：目录搬迁 / v1→v2 迁移 / 生效时机，临时 HOME）、`selftest-mcp-edit`（编辑写回 / 只读拒绝 / 改名迁移 / 脱敏往返 / readBody 加固）、`selftest-mcp`（catalog 分层检索 / 控制工具名护栏 / 会话透传 / 转换）、`selftest-composition-file`、`selftest-external-import`。
+
 代码分层：`src/domain/`（纯逻辑与策略）→ `src/*.ts`（运行时与面板）→ `src/client/`（浏览器视图）。
-`lib/exposure.js` 是领域纯逻辑的独立构建入口，供自测直接断言真值表。
+`lib/exposure.js`、`lib/composition-file.js`、`lib/external-import.js`、`lib/session-param.js` 是纯逻辑的独立构建入口，供自测直接断言（`verify` 会检查它们不依赖 `@deepseek-ai/*`）。
 
 ## 📋 变更日志
+
+### v0.7.0 — 上下文膨胀治理 + 一批真实缺陷修复（上游 0.5.7~0.6.0 等价移植）
+
+本批不合并上游分支（上游 0.6.0 仍带技能面板与 gateway/standing 行架构），而是逐条等价移植上游已验证的缺陷修复与两项高价值优化：
+
+- **⚠️ 破坏性：控制工具改名** `mcp_search` → `dsh_mcp_search`、`mcp_call` → `dsh_mcp_call`。原因：claude.ai 订阅网关把 `mcp_` 前缀当作 connector 保留名，工具表里含这两个名字会让**整个请求 400** 并伪报配额耗尽（上游 A/B/A 取证：含 5/5 全 400，不含 111/111 成功）。工具名收敛为常量 `MCP_SEARCH_TOOL` / `MCP_CALL_TOOL`，并加自测护栏「不得以 `mcp_` 开头」
+- **`dsh_mcp_search` 分层检索**：`server=X` 默认只给**能力摘要**（可见总数 + 前 5 个裸名预览），`all:true` 才返回完整清单且分页（默认 20 / 上限 100）；新增 `query + server` 在**单个 server 内**按需检索。此前 420+ 工具的 server 一次拉全表会把上下文先撑大再收缩、破坏前缀缓存
+- **采集与 prune 覆盖预设行**：`snapshotEnabled` 此前只遍历 loader，而预设 standing 行不在 loader 里 → 预设行的工具目录永远采不到，且 prune 的 alive 集合只含 loader 行时会删掉预设行的 last-good 快照。现统一以注册表快照（loader ∪ preset ∪ project）为准
+- **未注册行诚实上报**：进程在跑但零注册时，工具数/token 一律按 0 显示（新增「未注册」徽标），不再用目录快照回填成"有工具"的健康态
+- **`/mcp/add` 去重覆盖预设行**：此前只查 loader + patch 文本，对已安装的预设 server 会判成不存在并再写一行（同 scope serverName 冲突）
+- **编码回显脱敏**：`GET /mcp/detail` 的 `env`/`headers` 值以 `***MASKED***` 回显；写侧把哨兵解释为「保留原值」（成对实现，面板整表单回写不丢 secrets、也不会把哨兵写进配置）。`/mcp/scan` 刻意不脱敏（需令牌，且其用途是原样导入）
+- **`readBody` 加固**：改用 `StringDecoder` 逐块解码（跨 chunk 的中文不再乱码）；超限时先解绑监听器再排空丢弃，**不再 destroy socket**（否则 400 永远送不到客户端）
+- **逃生舱确认闸门**：`POST /policy/commit` 要求 `{ confirm: true }`（面板也二次确认）。此前任何脚本/模型一发裸 POST 就能作废 next-session「零缓存失效」承诺
+- **工具级批量启停**：新增 `POST /mcp/toolBulk`（`toolNames` 三态契约，`[]` 绝不当成「全部」）+ 面板工具面板的过滤框与批量按钮；内核一次写盘，替代逐条 `toolToggle` 的 N 次 state.json 写
+- **会话透传**：面板请求带上当前会话（`?session=`）。此前所有请求都不带 session，host 只能按 `roots[0]` 解析 —— 多会话并存时卡片显示的是启动期那个会话的数据
+- **工具链**：`pnpm setup` 支持 POSIX（此前只走 Windows `mklink /J`）；6 个自测挂成 `pnpm selftest` 并纳入 `prepublishOnly`
+- **顺带修复**：工具裸名渲染（`^mcp__[^_]+__` 对含下划线的 serverName 会残留前缀）
 
 ### v0.6.1 — 编辑 / 删除 / 从其它 Agent 导入
 
@@ -257,9 +280,9 @@ node scripts/selftest-mcp.mjs        # catalog 检索 / 组合文件文本 / 项
 
 - **移除技能功能**（技能交给独立的技能管理插件）；插件定位收敛为「MCP 可见性与可用性的单一控制面」
 - **四档曝光**取代原「启用/停用 + 全局 autoManage 开关」：原生注入 / 仅名称 / 隐藏 / 关闭
-- **预设关联**（运行时隔离）：`all` / `only` / `except` + 预设多选；装配、`mcp_search`、`mcp_call` 三处一致生效，进程保持后台运行
-- **`mcp_call` 支持只传 server**：工具名未知/为空时返回该服务器的工具清单（「仅名称」档位的发现路径）
-- **`mcp_search` 摘要按档位分层**：列出原生注入与仅名称的服务器，隐藏的只给计数提示，关闭与预设隔离的完全不出现
+- **预设关联**（运行时隔离）：`all` / `only` / `except` + 预设多选；装配、`dsh_mcp_search`、`dsh_mcp_call` 三处一致生效，进程保持后台运行
+- **`dsh_mcp_call` 支持只传 server**：工具名未知/为空时返回该服务器的工具清单（「仅名称」档位的发现路径）
+- **`dsh_mcp_search` 摘要按档位分层**：列出原生注入与仅名称的服务器，隐藏的只给计数提示，关闭与预设隔离的完全不出现
 - **架构重排**：三个各自过滤 `system-prompt/assemble` 的模块合并为单一装配层；live 行与 preset 行的两套构建路径归一为注册表；意图/生效两份表取代 desired/lastApplied/pending 多轨状态
 - **改名**：包名与挂载 id → `dsh-mcp-panel`（入口「MCP」，HTTP 前缀 `/api/mcp-panel`，旧前缀兼容）
 - **自动迁移**：数据目录（`dsh-mcp-skill-panel` → `dsh-mcp-panel`）与 state.json v1 → v2，迁移前备份 `state.v1.json`
