@@ -205,6 +205,14 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
               {t('mp.presetBlocked')}
             </span>
           )}
+          {row.unregistered && (
+            <span
+              style={C.badge('var(--dsw-alias-state-error-primary)', 'var(--dsw-alias-state-error-secondary)')}
+              title={t('mp.unregisteredHint')}
+            >
+              {t('mp.unregisteredBadge')}
+            </span>
+          )}
           {row.pending && (
             <span style={C.badge('var(--dsw-alias-state-warn-primary)', 'var(--dsw-alias-state-warn-tertiary)')}>
               {t('mp.pendingBadge')}

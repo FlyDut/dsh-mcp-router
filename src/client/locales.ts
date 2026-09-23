@@ -46,6 +46,9 @@ export const en: Record<string, string> = {
   'mp.statusDisabled': 'Stopped',
   'mp.statusIdle': 'No tools',
   'mp.statusFailed': 'Not running',
+  'mp.unregisteredBadge': 'Not registered',
+  'mp.unregisteredHint':
+    'The process is running but no tool has been registered for it — the tool count is shown as 0 (not backfilled from the directory snapshot). Check the server log, or restart it.',
   // exposure (four levels)
   'mp.exposureTitle': 'Exposure',
   'mp.exposureNative': 'Native',
@@ -184,6 +187,9 @@ export const zh: Record<string, string> = {
   'mp.statusDisabled': '已停止',
   'mp.statusIdle': '无工具',
   'mp.statusFailed': '未运行',
+  'mp.unregisteredBadge': '未注册',
+  'mp.unregisteredHint':
+    '进程在跑，但一个工具都没注册上——工具数按 0 显示（不再用目录快照回填）。请查看该 server 日志或重启它。',
   // 四档
   'mp.exposureTitle': '曝光档位',
   'mp.exposureNative': '原生注入',

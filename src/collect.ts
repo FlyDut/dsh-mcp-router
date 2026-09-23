@@ -164,6 +164,27 @@ export function computeStatus(disabled: boolean, running: boolean, liveTools: nu
   return liveTools > 0 ? 'active' : 'idle'
 }
 
+/**
+ * 面板显示数字的诚实口径（纯函数，selftest 表驱动回归）。
+ *
+ * 2026-09-23（移植上游 78142f6）：进程在跑但一个工具都没注册时，**不得**用目录快照
+ * 回填工具数/token —— 那会把「根本没注册上」渲染成有工具的健康态（上游 codegraph
+ * 实测：子进程零注册，面板却显示 tools=4）。历史目录仍经 toolList 兜底展示。
+ */
+export function computeRowDisplay(input: {
+  disabled: boolean
+  running: boolean
+  liveTools: number
+  liveTokens: number
+  catalogTools: number
+  catalogTokens: number
+}): { tools: number; tokens: number; unregistered: boolean } {
+  const unregistered = !input.disabled && input.running && input.liveTools <= 0
+  if (unregistered) return { tools: 0, tokens: 0, unregistered }
+  if (input.liveTools > 0) return { tools: input.liveTools, tokens: input.liveTokens, unregistered }
+  return { tools: input.catalogTools, tokens: input.catalogTokens, unregistered }
+}
+
 function baseView(
   ctx: Context,
   agent: ReturnType<typeof resolveAgent>,
@@ -301,8 +322,18 @@ async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<Mc
       const agg = byServer.get(serverName)
       const liveTools = agg?.tools ?? 0
       const catalogInfo = deps.catalogRuntime.catalog[serverName]
-      const displayTools = liveTools > 0 ? liveTools : (catalogInfo?.tools.length ?? 0)
-      const displayTokens = liveTools > 0 ? (agg?.tokens ?? 0) : catalogTokens(deps.catalogRuntime, serverName, catalogInfo)
+      // 诚实上报（移植上游 78142f6）：数字口径见 computeRowDisplay。
+      const display = computeRowDisplay({
+        disabled: ref.disabled,
+        running: ref.running,
+        liveTools,
+        liveTokens: agg?.tokens ?? 0,
+        catalogTools: catalogInfo?.tools.length ?? 0,
+        catalogTokens: catalogTokens(deps.catalogRuntime, serverName, catalogInfo),
+      })
+      const unregistered = display.unregistered
+      const displayTools = display.tools
+      const displayTokens = display.tokens
       // disabled → 'disabled'；启用但 fiber 缺失 → 'failed'；启用有 fiber → active/idle
       const status = computeStatus(ref.disabled, ref.disabled || ref.running, liveTools)
       let toolList = toolsByServer.get(serverName)
@@ -317,6 +348,7 @@ async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<Mc
         transport: ref.transport,
         disabled: ref.disabled,
         running: ref.running,
+        unregistered,
         tools: displayTools,
         tokens: displayTokens,
         toolList:

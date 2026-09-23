@@ -174,12 +174,23 @@ function profilePatchPath(ctx: Context): string {
   throw new Error('无法定位 profile 补丁文件 cordis.patch.yml（未找到 cordis.yml 根树；请确认 profile 已正常挂载后重试）')
 }
 
-/** 已存在检查：loader 存活行或 patch 文本里已有同 id。 */
-function existingRowIds(ctx: Context, patchText: string): Set<string> {
+/** 已存在检查：loader 存活行、注册表全部来源行（含预设 standing 行）、patch 文本里已有同 id。 */
+function existingRowIds(ctx: Context, registry: Registry, patchText: string): Set<string> {
   const ids = new Set<string>()
   for (const entry of ctx.loader.entries()) {
     if (!isMcpEntry(entry)) continue
     ids.add(String(entry.options.id))
+  }
+  // 预设 standing 行不在 loader 里（rc.1 起），只扫 loader 会让 /mcp/add 对已安装的
+  // 预设 server 再写一行 → 同 scope serverName 冲突（移植上游 d848005）。注册表快照
+  // 已统一三种来源，直接用它的 entryId/serverName，无需直连 standing 模块实例。
+  try {
+    for (const ref of registry.snapshot().all.values()) {
+      ids.add(ref.entryId)
+      ids.add(`mcp-${ref.serverName}`)
+    }
+  } catch {
+    // 注册表未就绪：退回 loader + patch 文本判据（保守，不阻塞添加）
   }
   for (const line of patchText.split(/\r?\n/)) {
     const m = /^\s*-?\s*id:\s*([^\s]+)\s*$/.exec(line)
@@ -232,10 +243,14 @@ function writeProjectMcp(workspace: string, servers: McpServers): Promise<{ file
 }
 
 /** 全局添加：写入 profile patch + 立即挂载到 loader（粘贴即用，重启由 patch 承接）。 */
-async function addGlobalMcp(ctx: Context, servers: McpServers): Promise<{ file: string; added: number; skipped: string[] }> {
+async function addGlobalMcp(
+  ctx: Context,
+  registry: Registry,
+  servers: McpServers,
+): Promise<{ file: string; added: number; skipped: string[] }> {
   const file = profilePatchPath(ctx)
   const patchText = await readFile(file, 'utf8').catch(() => '')
-  const existingIds = existingRowIds(ctx, patchText)
+  const existingIds = existingRowIds(ctx, registry, patchText)
   const toAdd = new Map<string, McpRowConfig>()
   const skipped: string[] = []
   for (const row of serversToRows(servers)) {
@@ -695,7 +710,7 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
         if (errors.length > 0) throw new Error(`转换失败：${errors.join('；')}`)
         if (Object.keys(servers).length === 0) throw new Error('没有可添加的 MCP server')
         if (target === 'global') {
-          const result = await addGlobalMcp(ctx, servers)
+          const result = await addGlobalMcp(ctx, registry, servers)
           if (result.added === 0) {
             throw new Error(`全部跳过（已存在或挂载失败）：${result.skipped.join('、') || '未知原因'}`)
           }

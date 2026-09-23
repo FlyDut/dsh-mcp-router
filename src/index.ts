@@ -52,8 +52,8 @@ export type { ServerRef } from './domain/registry'
 export type { PolicyRow } from './domain/policy'
 // 策略层工厂（selftest-policy.mjs 用最小 ctx 桩直接验证迁移/持久化/生效时机）
 export { createPolicyStore } from './domain/policy'
-// schemas 视图合并 + 状态徽标判定（selftest 回归护栏）
-export { mergeSchemas, computeStatus } from './collect'
+// schemas 视图合并 + 状态徽标判定 + 数字诚实口径（selftest 回归护栏）
+export { mergeSchemas, computeStatus, computeRowDisplay } from './collect'
 // 预设文件文本操作（selftest 回归护栏 + 潜在外部复用）
 export { setRowFlag, rowDisabledState, removeRow, materializeTargetOf, syncPresetFiles } from './preset'
 // 项目 MCP 扫描（selftest 回归护栏：根目录先读、子目录覆盖的去重规则）
@@ -181,8 +181,20 @@ async function resolveScopeSchemas(
   return getSchemasView(ctx, caches, scopeKey, 500)
 }
 
-/** 对所有当前 enabled 的 mcp server 重新快照。 */
-async function snapshotEnabled(ctx: Context, runtime: CatalogRuntime, caches: DomainCaches): Promise<void> {
+/**
+ * 对所有当前 enabled 的 mcp server 重新快照（三来源统一：loader / preset / project）。
+ *
+ * 2026-09-23（移植上游 c0855f9）：采集与 prune 都必须以**注册表快照**为准。此前只看
+ * `ctx.loader.entries()`，而预设 standing 行不在 loader 里 —— 结果是预设行的工具目录
+ * 永远采不到，且 prune 的 alive 集合一旦只含 loader 行，就会把预设行已有的 last-good
+ * 快照一并删掉（本部署预设行是主力形态，影响面比上游更大）。
+ */
+async function snapshotEnabled(
+  ctx: Context,
+  runtime: CatalogRuntime,
+  caches: DomainCaches,
+  registry: Registry,
+): Promise<void> {
   runtime.diag.snapshots += 1
   // 磁盘 last-good 尚未加载完成：跳过采集，避免空快照覆盖磁盘好数据。
   if (!runtime.loaded) {
@@ -212,10 +224,11 @@ async function snapshotEnabled(ctx: Context, runtime: CatalogRuntime, caches: Do
     }
     runtime.diag.lastMcpTools = mcpTools
     runtime.diag.lastScope = mcpTools > 0
-    for (const entry of ctx.loader.entries()) {
-      if (!isMcpEntry(entry)) continue
-      if (entry.disabled) continue
-      const serverName = serverNameOf(entry)
+    // 一次取快照：采集与 prune 共用同一份行集合，避免两次读取间状态漂移。
+    const refs = registry.snapshot().all
+    for (const ref of refs.values()) {
+      if (ref.disabled) continue
+      const serverName = ref.serverName
       let tools: CatalogEntry[]
       try {
         tools = snapshotFromSchemas(schemas, serverName)
@@ -225,16 +238,14 @@ async function snapshotEnabled(ctx: Context, runtime: CatalogRuntime, caches: Do
       const prev = next[serverName]
       if (prev && prev.source === 'live' && sameToolList(prev.tools, tools)) continue
       // last-good（v0.4.6 加强）：空采集一律不写盘，避免污染磁盘快照。
+      // 未运行的预设行取不到工具 → 走这条保留其历史快照（不覆盖成空）。
       if (tools.length === 0) continue
       next[serverName] = { tools, fetchedAt: Date.now(), source: 'live' }
       changed = true
     }
-    // 失效清理：loader 视图为空时跳过 prune，绝不删除 last-good。
-    const alive = new Set<string>()
-    for (const entry of ctx.loader.entries()) {
-      if (!isMcpEntry(entry)) continue
-      alive.add(serverNameOf(entry))
-    }
+    // 失效清理：alive = 注册表里仍配置的**全部**行（含停用行 —— 停用不等于删除，
+    // 其 last-good 必须留给面板与 mcp_search 兜底）。注册表为空（启动早期）时跳过 prune。
+    const alive = new Set<string>(refs.keys())
     if (alive.size > 0) {
       for (const key of Object.keys(next)) {
         if (!alive.has(key)) {
@@ -384,7 +395,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       scheduled = true
       ctx.timeout(() => {
         scheduled = false
-        void snapshotEnabled(ctx, catalogRuntime, caches)
+        void snapshotEnabled(ctx, catalogRuntime, caches, registry)
       }, CATALOG_SNAPSHOT_DEBOUNCE_MS)
     })
     const offLoader = ctx.root.on('loader/partial-dispose', () => {
@@ -398,7 +409,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   }, 'mcp-panel: catalog snapshot + registry refresh')
 
   // 初始快照（可能还没有 agent，mcp__* 会在后续增量补全）
-  void snapshotEnabled(ctx, catalogRuntime, caches).catch(() => {})
+  void snapshotEnabled(ctx, catalogRuntime, caches, registry).catch(() => {})
 
   // 会话边界：next-session 模式的待生效意图在此提升为生效
   ctx.effect(
@@ -440,7 +451,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         controller,
         registry,
         policy,
-        triggerSnapshot: () => snapshotEnabled(httpCtx, catalogRuntime, caches),
+        triggerSnapshot: () => snapshotEnabled(httpCtx, catalogRuntime, caches, registry),
       })
       const disposers = routes.map((route) => httpCtx.webServer.register(route))
       return () => {
@@ -518,7 +529,7 @@ function buildMcpControl(
     },
     setAiOwner: (entryId, at) => setStateAiOwner(entryId, at),
     clearAiOwner: (entryId) => clearStateAiOwner(entryId),
-    snapshotEnabled: () => snapshotEnabled(ctx, runtime, caches),
+    snapshotEnabled: () => snapshotEnabled(ctx, runtime, caches, registry),
   }
 }
 

@@ -69,6 +69,25 @@ export declare function scopeKeySource(): 'agent' | 'standing' | null;
  * 兜底，用它判定 active 会掩盖「scope 解析失败但 catalog 有旧快照」的故障现场。
  */
 export declare function computeStatus(disabled: boolean, running: boolean, liveTools: number): McpRow['status'];
+/**
+ * 面板显示数字的诚实口径（纯函数，selftest 表驱动回归）。
+ *
+ * 2026-09-23（移植上游 78142f6）：进程在跑但一个工具都没注册时，**不得**用目录快照
+ * 回填工具数/token —— 那会把「根本没注册上」渲染成有工具的健康态（上游 codegraph
+ * 实测：子进程零注册，面板却显示 tools=4）。历史目录仍经 toolList 兜底展示。
+ */
+export declare function computeRowDisplay(input: {
+    disabled: boolean;
+    running: boolean;
+    liveTools: number;
+    liveTokens: number;
+    catalogTools: number;
+    catalogTokens: number;
+}): {
+    tools: number;
+    tokens: number;
+    unregistered: boolean;
+};
 /** MCP 工具聚合结果：per-server 工具数 + token 估算。 */
 export interface McpAggregate {
     byServer: Map<string, {

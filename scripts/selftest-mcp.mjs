@@ -255,6 +255,34 @@ check('computeStatus：表驱动四态（active 以 liveTools 真实注册为准
   }
 })
 
+// computeRowDisplay：数字诚实口径（移植上游 78142f6 —— 零注册不得被目录快照伪装成健康）
+check('computeRowDisplay：启用+在跑+零注册不回填 catalog，停用/未运行仍可回填', () => {
+  const base = { liveTools: 0, liveTokens: 0, catalogTools: 4, catalogTokens: 120 }
+  // 启用 + 在跑 + 零注册 → 0/0 + unregistered（这正是「假绿」现场）
+  assert.deepEqual(index.computeRowDisplay({ ...base, disabled: false, running: true }), {
+    tools: 0,
+    tokens: 0,
+    unregistered: true,
+  })
+  // 启用 + 在跑 + 有注册 → 用 live 真值
+  assert.deepEqual(
+    index.computeRowDisplay({ ...base, disabled: false, running: true, liveTools: 14, liveTokens: 900 }),
+    { tools: 14, tokens: 900, unregistered: false },
+  )
+  // 停用（进程可能仍在跑）→ 用 catalog 快照回填，且不算 unregistered
+  assert.deepEqual(index.computeRowDisplay({ ...base, disabled: true, running: true }), {
+    tools: 4,
+    tokens: 120,
+    unregistered: false,
+  })
+  // 未运行 → 同样回填快照，unregistered 由 computeStatus 的 failed 表达
+  assert.deepEqual(index.computeRowDisplay({ ...base, disabled: false, running: false }), {
+    tools: 4,
+    tokens: 120,
+    unregistered: false,
+  })
+})
+
 // rowDisabledState / setRowFlag（可维护性批次 P1-1 拆出 preset.ts 后的回归护栏）
 check('rowDisabledState / setRowFlag：组合文件 disabled 行读写', () => {
   const comp = '- id: mcp-a\n  name: "@deepseek-ai/dsh-mcp-client"\n  disabled: true\n  config:\n    serverName: aaa\n- id: b\n'

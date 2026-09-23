@@ -26,6 +26,8 @@ export interface McpRow {
     disabled: boolean;
     /** 进程当前是否在跑。 */
     running: boolean;
+    /** 进程在跑但一个工具都没注册（有效档位需要工具时属异常；工具数不再回落目录快照）。 */
+    unregistered: boolean;
     /** 工具数（停用态用 catalog 快照回填）。 */
     tools: number;
     /** token 估算（停用态用 catalog 快照回填）。 */

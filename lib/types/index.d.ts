@@ -28,7 +28,7 @@ export type { Exposure, PresetScope, ServerPolicy } from './domain/exposure';
 export type { ServerRef } from './domain/registry';
 export type { PolicyRow } from './domain/policy';
 export { createPolicyStore } from './domain/policy';
-export { mergeSchemas, computeStatus } from './collect';
+export { mergeSchemas, computeStatus, computeRowDisplay } from './collect';
 export { setRowFlag, rowDisabledState, removeRow, materializeTargetOf, syncPresetFiles } from './preset';
 export { scanWorkspaceMcp } from './project-mcp';
 export { installProjectMcp, remountWorkspace, projectServerOwner, projectServerName, findProjectMcpFile } from './project-mcp';
