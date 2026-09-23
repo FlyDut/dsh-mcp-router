@@ -119,6 +119,18 @@ export declare function msgOf(error: unknown): string;
  * 在 apply 里构建并封闭所有 IO。
  */
 export declare function createMcpCallController(ctx: Context, caches: McpControlCtx): McpCallController;
+/** server=X 分支的结果构造（纯函数，selftest 表驱动：防「一次回吐全表」的上下文膨胀）。 */
+export declare function buildServerListingResult(input: {
+    server: string;
+    found: boolean;
+    visible: Array<{
+        name: string;
+        description: string;
+    }>;
+    all: boolean;
+    offset?: number;
+    pageSize?: number;
+}): Record<string, unknown>;
 /**
  * 注册 mcp_search + mcp_call 两个模型工具。`controller` 必须是调用方持有的唯一
  * 控制层实例（与空闲回收器共享同一引用计数/owner 状态），否则回收与调用不同步。

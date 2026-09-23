@@ -395,16 +395,16 @@ function bareNameOf(fullName: string): string {
  * 这是「仅名称」档位下模型发现工具的主要路径：不必猜名字，直接问。
  */
 function toolListText(caches: McpControlCtx, serverName: string): string {
-  const rows = listServer(caches.getCatalog(), serverName)
-  if (!rows || rows.length === 0) {
+  const listing = listServer(caches.getCatalog(), serverName)
+  if (!listing.found || listing.totalCount === 0) {
     return (
       `MCP server "${serverName}" 目前没有采集到工具目录（可能尚未运行过或该 server 无工具）。` +
       `可直接用 mcp_call 指定裸工具名尝试；或用 mcp_search({ server: "${serverName}" }) 重试。`
     )
   }
-  const lines = rows.map((tool) => `- ${bareNameOf(tool.name)}: ${tool.description || '（无描述）'}`)
+  const lines = listing.tools.map((tool) => `- ${bareNameOf(tool.name)}: ${tool.description || '（无描述）'}`)
   return (
-    `MCP server "${serverName}" 的工具清单（共 ${rows.length} 个）：\n${lines.join('\n')}\n\n` +
+    `MCP server "${serverName}" 的工具清单（共 ${listing.totalCount} 个）：\n${lines.join('\n')}\n\n` +
     `调用方式：mcp_call({ server: "${serverName}", tool: "<上面的裸名>", arguments: { ... } })`
   )
 }
@@ -581,6 +581,12 @@ function clampLimit(value: number | undefined, defaultValue: number, max: number
 /** 摘要截断长度：mcp_search 空查询的输出 token 控制（P2-5）。 */
 const SUMMARY_MAX_LEN = 80
 
+/** server=X 的能力摘要：只预览前 N 个工具名（移植上游 18576e4，防一次回吐上百工具）。 */
+const LIST_PREVIEW_COUNT = 5
+/** all:true 返回完整清单时的默认页大小与上限。 */
+const LIST_PAGE_DEFAULT = 20
+const LIST_PAGE_MAX = 100
+
 function buildSummary(control: McpControlCtx): Array<{ server: string; summary: string }> {
   const catalog = control.getCatalog()
   // 只列「配置了 serverSummary 或 catalog 有快照」的 server（此前硬编码作者机器上的
@@ -606,15 +612,66 @@ function buildSummary(control: McpControlCtx): Array<{ server: string; summary: 
   return lines
 }
 
+/** server=X 分支的结果构造（纯函数，selftest 表驱动：防「一次回吐全表」的上下文膨胀）。 */
+export function buildServerListingResult(input: {
+  server: string
+  found: boolean
+  visible: Array<{ name: string; description: string }>
+  all: boolean
+  offset?: number
+  pageSize?: number
+}): Record<string, unknown> {
+  const total = input.visible.length
+  if (!input.all) {
+    const preview = input.visible.slice(0, LIST_PREVIEW_COUNT)
+    return {
+      ok: true,
+      kind: 'list',
+      server: input.server,
+      found: input.found,
+      count: total,
+      preview: preview.map((tool) => ({ name: bareNameOf(tool.name), description: tool.description })),
+      truncated: total > preview.length,
+      hint:
+        total > preview.length
+          ? `仅显示前 ${LIST_PREVIEW_COUNT} 个；完整清单请传 all:true（分页），或直接 query+server 检索具体工具`
+          : null,
+    }
+  }
+  const offset = Math.max(0, Math.floor(Number(input.offset) || 0))
+  const requested = Math.min(Math.max(1, Math.floor(Number(input.pageSize) || LIST_PAGE_DEFAULT)), LIST_PAGE_MAX)
+  const page = input.visible.slice(offset, offset + requested)
+  return {
+    ok: true,
+    kind: 'list',
+    server: input.server,
+    found: input.found,
+    count: total,
+    offset,
+    limit: requested,
+    tools: page,
+    hasMore: offset + page.length < total,
+  }
+}
+
 function registerMcpSearchTool(ctx: Context, control: McpControlCtx): () => void {
   const definition = defineTool({
     name: 'mcp_search',
     description:
-      '检索可用的 MCP 服务器与工具目录。空参数返回当前会话可用的服务器索引；传 server 列出该服务器的全部工具；传 query 做关键词 top-K 全文检索（命中返回完整 schema）。只返回对当前 agent 预设开放且未彻底关闭的服务器。',
+      '检索可用的 MCP 服务器与工具目录（只读，不执行）。四种用法：① 空参数 → 当前会话可用的服务器索引；' +
+      `② server=X → 该 server 的**能力摘要**（工具总数 + 前 ${LIST_PREVIEW_COUNT} 个名字预览，默认不返回全表）；` +
+      '③ query + server → **在该 server 内**按需检索 top-K 命中（含完整 schema），想找某个 server 上的具体工具就用这个；' +
+      '④ query → 全目录关键词检索。查到工具名后用 mcp_call(server, tool, arguments) 调用；不要用 ② 拉全表' +
+      '（只有 all:true 才返回完整清单，且分页）。只返回对当前 agent 预设开放且未彻底关闭的服务器。',
     parameters: {
       query: { type: 'string', description: '检索关键词，按工具名/描述/参数名打分' },
-      server: { type: 'string', description: '列出指定 MCP server 的全部工具' },
-      limit: { type: 'integer', description: 'top-K 上限（默认 5，最大 10）' },
+      server: {
+        type: 'string',
+        description: `目标 MCP server 名。单独传 = 返回能力摘要（工具总数 + 前 ${LIST_PREVIEW_COUNT} 个名字预览）；与 query 同传 = 只在该 server 内检索`,
+      },
+      all: { type: 'boolean', description: '仅在传 server 时有效：true = 返回该 server 的完整工具清单（分页，可能很大）。默认 false 只给摘要' },
+      limit: { type: 'integer', description: 'query 检索的 top-K 上限（默认 5，最大 10）；all:true 分页时表示页大小（默认 20，最大 100）' },
+      offset: { type: 'integer', description: '配合 all:true 的分页起点（默认 0）' },
     },
     output: {
       schema: { type: 'json' },
@@ -631,20 +688,37 @@ function registerMcpSearchTool(ctx: Context, control: McpControlCtx): () => void
       const searchable = (name: string): boolean => access(name).effective !== 'off'
       const keepTool = (name: string): boolean => !policyDisablesTool(access(serverOfMcp(name) ?? '').policy, name)
 
-      if (server) {
-        if (!searchable(server)) {
-          return toJson({ ok: false, kind: 'list', server, found: false, error: blockedText(server, access(server)) })
-        }
-        const result = listServer(catalog, server)
-        const tools = (result ?? []).filter((tool) => keepTool(tool.name))
+      if (server && !searchable(server)) {
         return toJson({
-          ok: true,
-          kind: 'list',
+          ok: false,
+          kind: query ? 'search' : 'list',
           server,
-          found: result !== undefined,
-          count: tools.length,
-          tools,
+          found: false,
+          error: blockedText(server, access(server)),
         })
+      }
+
+      // ③ query + server：在该 server 内按需检索 —— 「知道该调哪个工具」的正解：按需、有界
+      if (server && query) {
+        const hits: SearchHit[] = searchCatalog(catalog, query, limit, server).filter((hit) => keepTool(hit.tool.name))
+        return toJson({ ok: true, kind: 'search', server, query, count: hits.length, limit, hits })
+      }
+
+      if (server) {
+        // ② server=X：默认只给能力摘要，不再一次性回吐全表（移植上游 18576e4）
+        const listing = listServer(catalog, server)
+        // 工具级禁用先过滤：count 必须是「可见总数」而非页大小（上游 b8b87f9 修过该口径）
+        const visible = listing.tools.filter((tool) => keepTool(tool.name))
+        return toJson(
+          buildServerListingResult({
+            server,
+            found: listing.found,
+            visible,
+            all: args.all === true,
+            offset: typeof args.offset === 'number' ? args.offset : undefined,
+            pageSize: typeof args.limit === 'number' ? args.limit : undefined,
+          }),
+        )
       }
 
       if (query) {

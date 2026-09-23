@@ -21,6 +21,7 @@ import Schema from '@deepseek-ai/schemastery';
 import type { Context } from '@deepseek-ai/cordis';
 import { type Exposure } from './domain/exposure';
 export { normalizeToolName, normalizeArguments, msgOf } from './mcpcall';
+export { buildServerListingResult } from './mcpcall';
 export type { McpView, McpRow } from './shared-types';
 export type { DomainCaches } from './collect';
 export type { CatalogRuntime } from './runtime-types';

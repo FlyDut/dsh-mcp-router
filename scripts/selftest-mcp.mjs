@@ -148,14 +148,83 @@ check('searchCatalog 空 query 返回空；limit 被尊重', () => {
   assert.ok(all.length >= 4)
 })
 
-check('listServer 返回精简名+描述；未知 server undefined', () => {
+check('mcp_search server=X：默认只回能力摘要（前 5 个预览），不返回全表', () => {
+  const tools = []
+  for (let i = 0; i < 120; i += 1) {
+    tools.push({ name: `mcp__big__tool_${String(i).padStart(3, '0')}`, description: `工具 ${i}` })
+  }
+  const out = index.buildServerListingResult({ server: 'big', found: true, visible: tools, all: false })
+  assert.equal(out.count, 120, 'count 是可见总数')
+  assert.equal(out.preview.length, 5, '默认只预览 5 个')
+  assert.equal(out.truncated, true)
+  assert.ok(!('tools' in out), '默认不得回吐全表字段')
+  assert.equal(out.preview[0].name, 'tool_000', '预览用裸名（供 mcp_call 直接调用）')
+  assert.ok(JSON.stringify(out).length < 2000, `摘要必须远小于全表（实际 ${JSON.stringify(out).length} 字节）`)
+})
+
+check('mcp_search server=X + all:true：分页且 count=总数、hasMore/页上限正确', () => {
+  const tools = []
+  for (let i = 0; i < 45; i += 1) tools.push({ name: `mcp__big__t${i}`, description: '' })
+  const first = index.buildServerListingResult({ server: 'big', found: true, visible: tools, all: true })
+  assert.equal(first.count, 45, 'count 仍是总数，不是页大小')
+  assert.equal(first.limit, 20, '默认页大小 20')
+  assert.equal(first.tools.length, 20)
+  assert.equal(first.hasMore, true)
+  const last = index.buildServerListingResult({ server: 'big', found: true, visible: tools, all: true, offset: 40 })
+  assert.equal(last.tools.length, 5)
+  assert.equal(last.hasMore, false, '末页 hasMore=false')
+  const capped = index.buildServerListingResult({ server: 'big', found: true, visible: tools, all: true, pageSize: 999 })
+  assert.equal(capped.limit, 100, '页大小上限 100')
+})
+
+check('mcp_search server=X：空清单 / 未找到 server 的摘要形态', () => {
+  const empty = index.buildServerListingResult({ server: 'ghost', found: false, visible: [], all: false })
+  assert.equal(empty.count, 0)
+  assert.equal(empty.truncated, false)
+  assert.equal(empty.hint, null)
+  assert.deepEqual(empty.preview, [])
+})
+
+check('listServer 三态：found/totalCount/本页；未知 server found=false（不再返回 undefined）', () => {
   const c = buildCatalog()
   const chrome = catalog.listServer(c, 'chrome')
-  assert.ok(chrome)
-  assert.equal(chrome.length, 1)
-  assert.equal(chrome[0].name, 'mcp__chrome__navigate')
-  assert.equal(chrome[0].description, '导航到 URL')
-  assert.equal(catalog.listServer(c, 'nope'), undefined)
+  assert.equal(chrome.found, true)
+  assert.equal(chrome.totalCount, 1)
+  assert.equal(chrome.limit, null, '未传 limit = 不分页')
+  assert.equal(chrome.tools.length, 1)
+  assert.equal(chrome.tools[0].name, 'mcp__chrome__navigate')
+  assert.equal(chrome.tools[0].description, '导航到 URL')
+  const missing = catalog.listServer(c, 'nope')
+  assert.equal(missing.found, false)
+  assert.equal(missing.totalCount, 0)
+  assert.deepEqual(missing.tools, [])
+})
+
+check('listServer 分页：totalCount 不受页大小影响（b8b87f9 口径）+ offset/hasMore', () => {
+  const c = buildCatalog()
+  const first = catalog.listServer(c, 'cheatengine', { limit: 1 })
+  assert.equal(first.totalCount, 2, 'count 必须是总数，不是页大小')
+  assert.equal(first.tools.length, 1)
+  assert.equal(first.limit, 1)
+  const second = catalog.listServer(c, 'cheatengine', { offset: 1, limit: 1 })
+  assert.equal(second.totalCount, 2)
+  assert.equal(second.tools.length, 1)
+  assert.notEqual(second.tools[0].name, first.tools[0].name, 'offset 生效')
+  const beyond = catalog.listServer(c, 'cheatengine', { offset: 99 })
+  assert.deepEqual(beyond.tools, [])
+  assert.equal(beyond.totalCount, 2)
+})
+
+check('searchCatalog scopedTo：只在指定 server 内检索；未知 server 返回空', () => {
+  const c = buildCatalog()
+  const allHits = catalog.searchCatalog(c, 'read', 10)
+  assert.ok(allHits.length > 0)
+  const scoped = catalog.searchCatalog(c, 'read', 10, 'cheatengine')
+  assert.ok(scoped.length > 0, 'scoped 应命中 cheatengine 的工具')
+  assert.ok(scoped.every((h) => h.server === 'cheatengine'), 'scoped 不得返回其它 server')
+  // iamge 类关键词在 chrome 内无命中 → 空，但 server 存在（与「server 不存在」区分靠 listServer）
+  assert.equal(catalog.searchCatalog(c, 'read', 10, 'chrome').length, 0)
+  assert.equal(catalog.searchCatalog(c, 'read', 10, 'no-such-server').length, 0)
 })
 
 check('serverOfMcp 解析 server 名', () => {

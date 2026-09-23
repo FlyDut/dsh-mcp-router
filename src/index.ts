@@ -44,6 +44,8 @@ import { agentPresetId, agentWorkspace, rememberSessionScope, sameWorkspace } fr
 
 // mcp_call 参数/错误归一化（selftest 回归护栏：双重前缀与参数双编码缺陷）
 export { normalizeToolName, normalizeArguments, msgOf } from './mcpcall'
+// mcp_search 的 server=X 分支结果构造（selftest 回归护栏：摘要/分页不得回吐全表）
+export { buildServerListingResult } from './mcpcall'
 export type { McpView, McpRow } from './shared-types'
 export type { DomainCaches } from './collect'
 export type { CatalogRuntime } from './runtime-types'

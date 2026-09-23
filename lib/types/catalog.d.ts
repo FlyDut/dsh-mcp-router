@@ -44,16 +44,39 @@ export declare function snapshotFromSchemas(schemas: ReadonlyArray<{
  * 关键词全文检索 top-K。
  * 打分：工具名命中 3 / 工具名前缀 2 / 描述命中 2 / 描述前缀 1 / 参数名 1。
  * 返回按分数降序（同分按 server、name 字典序稳定）的命中数组。
+ *
+ * @param scopedTo 限定单个 server（`query + server` 的「在该 server 内按需检索」）。
+ *   未找到该 server 时返回空数组 —— 调用方据此区分「无命中」与「server 不存在」。
  */
-export declare function searchCatalog(catalog: Catalog, query: string, limit?: number): SearchHit[];
+export declare function searchCatalog(catalog: Catalog, query: string, limit?: number, scopedTo?: string): SearchHit[];
+/** 某 server 的工具清单读数（三态：是否存在 / 总数 / 本页）。 */
+export interface ServerListing {
+    server: string;
+    /** catalog 里是否存在该 server 的快照。 */
+    found: boolean;
+    /** 工具总数（**不受分页影响**；模型据此判断规模）。 */
+    totalCount: number;
+    /** 本页工具（name 为完整注册名 `mcp__<server>__<tool>`）。 */
+    tools: Array<{
+        name: string;
+        description: string;
+    }>;
+    /** 本页起点（0 基）。 */
+    offset: number;
+    /** 本页大小；null = 未分页（返回 offset 之后的全部）。 */
+    limit: number | null;
+}
 /**
- * 列出某 server 的全部工具（精简：name + description）。
- * 返回 undefined 表示该 server 不在 catalog 中。
+ * 列出某 server 的工具（name + description），支持分页。
+ *
+ * 返回三态而非 `Array | undefined`：调用方需要同时知道「server 是否存在」与
+ * 「共有多少个」—— 只回数组时容易把「分页后的页大小」当成总数（上游 b8b87f9
+ * 修过这个 bug：27 个工具报 20）。
  */
-export declare function listServer(catalog: Catalog, server: string): Array<{
-    name: string;
-    description: string;
-}> | undefined;
+export declare function listServer(catalog: Catalog, server: string, options?: {
+    offset?: number;
+    limit?: number;
+}): ServerListing;
 /** catalog 文件路径：<dir>/catalog.json。 */
 export declare function catalogFileFor(dir: string): string;
 /** 从目录加载 catalog；文件不存在 / 解析失败时返回空 catalog。 */
