@@ -7,7 +7,7 @@
  * - `domain/policy.ts`    策略真源（意图/生效两份 + 持久化 + 启动迁移）
  * - `domain/registry.ts`  MCP 行来源归一（loader / preset standing / 项目级）
  * - `domain/assembly.ts`  唯一装配注入点（工具过滤 + 仅名称索引段）
- * - `mcpcall.ts`          中间层（mcp_search / mcp_call）+ 保活回收
+ * - `mcpcall.ts`          中间层（dsh_mcp_search / dsh_mcp_call）+ 保活回收
  * - `collect.ts`/`routes.ts` 面板数据与 HTTP 端点
  *
  * 两条历史铁律（实测事故得出，勿改）：
@@ -42,9 +42,11 @@ import { createRegistry, type Registry } from './domain/registry'
 import { exposureForRef, installAssembly } from './domain/assembly'
 import { agentPresetId, agentWorkspace, rememberSessionScope, sameWorkspace } from './domain/session-scope'
 
-// mcp_call 参数/错误归一化（selftest 回归护栏：双重前缀与参数双编码缺陷）
+// dsh_mcp_call 参数/错误归一化（selftest 回归护栏：双重前缀与参数双编码缺陷）
 export { normalizeToolName, normalizeArguments, msgOf } from './mcpcall'
-// mcp_search 的 server=X 分支结果构造（selftest 回归护栏：摘要/分页不得回吐全表）
+// 控制工具名常量（selftest 护栏：不得以 mcp_ 开头，否则 claude.ai 网关整请求 400）
+export { MCP_SEARCH_TOOL, MCP_CALL_TOOL, CONTROL_TOOL_NAMES } from './mcpcall'
+// dsh_mcp_search 的 server=X 分支结果构造（selftest 回归护栏：摘要/分页不得回吐全表）
 export { buildServerListingResult } from './mcpcall'
 export type { McpView, McpRow } from './shared-types'
 export type { DomainCaches } from './collect'
@@ -81,32 +83,32 @@ export const inject = ['tools', 'agents', 'agentPresets', 'loader', 'systemPromp
 export interface Config {
   /** 保活回收窗口（ms）。默认 30_000。 */
   keepAliveMs?: number
-  /** mcp_search 缺省 top-K。默认 5。 */
+  /** dsh_mcp_search 缺省 top-K。默认 5。 */
   searchLimitDefault?: number
-  /** mcp_search top-K 上限。默认 10。 */
+  /** dsh_mcp_search top-K 上限。默认 10。 */
   searchLimitMax?: number
-  /** 能力摘要表（name-only 索引段与 mcp_search 摘要用）。 */
+  /** 能力摘要表（name-only 索引段与 dsh_mcp_search 摘要用）。 */
   serverSummary?: Record<string, string>
   /** 未配置过的 MCP 服务器使用的默认档位。默认 native（DSH 原生行为）。 */
   defaultExposure?: Exposure
-  /** 是否注册中间层工具（mcp_search / mcp_call）。默认 true。 */
+  /** 是否注册中间层工具（dsh_mcp_search / dsh_mcp_call）。默认 true。 */
   middleLayer?: boolean
 }
 
 export const Config: Schema<Config> = Schema.object({
   keepAliveMs: Schema.number().min(1000).description('MCP 保活空闲回收窗口（ms）').default(30_000),
-  searchLimitDefault: Schema.number().min(1).description('mcp_search 缺省 top-K').default(5),
-  searchLimitMax: Schema.number().min(1).description('mcp_search top-K 上限').default(10),
+  searchLimitDefault: Schema.number().min(1).description('dsh_mcp_search 缺省 top-K').default(5),
+  searchLimitMax: Schema.number().min(1).description('dsh_mcp_search top-K 上限').default(10),
   serverSummary: Schema.dict(Schema.string()).description('MCP 能力摘要表（serverName → 一句话）'),
   defaultExposure: Schema.union(['native', 'name-only', 'hidden', 'off'])
     .description('未配置 MCP 的默认档位')
     .default('native'),
-  middleLayer: Schema.boolean().description('注册 mcp_search / mcp_call 中间层工具').default(true),
+  middleLayer: Schema.boolean().description('注册 dsh_mcp_search / dsh_mcp_call 中间层工具').default(true),
 })
 
 /** 私有 catalog / state 持久化目录。 */
 const CATALOG_DIR = join(stateDir())
-/** mcp_call 注册/调用的默认超时（读 entry config toolCallTimeoutMs，缺省回退）。 */
+/** dsh_mcp_call 注册/调用的默认超时（读 entry config toolCallTimeoutMs，缺省回退）。 */
 const DEFAULT_TOOL_TIMEOUT_MS = 60_000
 /** tools/change 后增量快照的去抖窗口。 */
 const CATALOG_SNAPSHOT_DEBOUNCE_MS = 150
@@ -250,7 +252,7 @@ async function snapshotEnabled(
       changed = true
     }
     // 失效清理：alive = 注册表里仍配置的**全部**行（含停用行 —— 停用不等于删除，
-    // 其 last-good 必须留给面板与 mcp_search 兜底）。注册表为空（启动早期）时跳过 prune。
+    // 其 last-good 必须留给面板与 dsh_mcp_search 兜底）。注册表为空（启动早期）时跳过 prune。
     const alive = new Set<string>(refs.keys())
     if (alive.size > 0) {
       for (const key of Object.keys(next)) {
@@ -376,7 +378,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const disposeProjectMcp = installProjectMcp(ctx, policy)
   ctx.effect(() => disposeProjectMcp, 'mcp-panel: project mcp teardown')
 
-  // 中间层工具（mcp_search / mcp_call）+ 空闲回收器
+  // 中间层工具（dsh_mcp_search / dsh_mcp_call）+ 空闲回收器
   if (config.middleLayer !== false) {
     const disposeTools = installMcpControlTools(ctx, control, controller)
     const offReaper = controller.startIdleReaper()
@@ -478,7 +480,7 @@ function buildMcpControl(
   isAiActive: (serverName: string) => boolean,
 ): McpControlCtx {
   // preset 超时缓存（presetId+serverName → 超时/ms，有效 60s）：inventory+resolve+read
-  // 每次 mcp_call 都做太重，key 含 presetId（切 preset 即换 key，天然失效）。
+  // 每次 dsh_mcp_call 都做太重，key 含 presetId（切 preset 即换 key，天然失效）。
   const presetTimeoutCache = new Map<string, { at: number; timeout: number | undefined }>()
   const assemblyDeps = {
     ctxForPreset: ctx,

@@ -2,9 +2,9 @@
  * MCP 中间层：模型面恒定 2 个工具 + 控制层。
  *
  * 模型面：
- *   mcp_search —— 检索私有 catalog（索引 / 列表 / top-K 全文检索），
+ *   dsh_mcp_search —— 检索私有 catalog（索引 / 列表 / top-K 全文检索），
  *                 结果按当前会话的曝光档位与预设关联过滤
- *   mcp_call   —— 按需启用指定 server → 执行工具 → 返回文本结果；
+ *   dsh_mcp_call   —— 按需启用指定 server → 执行工具 → 返回文本结果；
  *                 工具名未知时直接返回该 server 的工具清单
  *
  * 控制层职责：
@@ -56,7 +56,20 @@ const REGISTER_POLL_MS = 50
 const DEFAULT_TOOL_TIMEOUT_MS = 60_000
 
 /**
- * 归一化 mcp_call 的 tool 参数（2026-08-22 修补）：模型可能把 mcp_search 返回的
+ * 控制工具名（单一事实源）。
+ *
+ * ⚠️ 名字**不得以 `mcp_` 开头**：claude.ai 订阅网关把 `mcp_` 前缀当作 connector
+ * 保留名，工具表里含旧名（`mcp_search` / `mcp_call`）会让整个请求 400 并伪报配额
+ * 耗尽（上游 PR #16 的 A/B/A 取证：含这两个工具 5/5 全 400，不含 111/111 成功）。
+ * selftest-mcp.mjs 有护栏断言，防止日后改回去。
+ */
+export const MCP_SEARCH_TOOL = 'dsh_mcp_search'
+export const MCP_CALL_TOOL = 'dsh_mcp_call'
+/** 中间层注册的两个控制工具名（装配层/网关按此判定控制工具）。 */
+export const CONTROL_TOOL_NAMES: ReadonlySet<string> = new Set([MCP_SEARCH_TOOL, MCP_CALL_TOOL])
+
+/**
+ * 归一化 dsh_mcp_call 的 tool 参数（2026-08-22 修补）：模型可能把 dsh_mcp_search 返回的
  * 注册全名（mcp__<server>__<tool>）直接填入 tool，无条件拼接会生成双重前缀。
  * 规则：以 mcp__ 开头视为注册全名形态 → 循环剥离本 server 前缀（兼容嵌套重复）；
  * 剥完仍以 mcp__ 开头 → 传的是其他 server 的注册全名或格式异常 → 快速失败
@@ -70,7 +83,7 @@ export function normalizeToolName(serverName: string, toolName: string): string 
     while (name.startsWith(prefix)) name = name.slice(prefix.length)
     if (name.startsWith('mcp__')) {
       throw new Error(
-        `mcp_call: tool 参数疑似其他 MCP server 的注册全名（${JSON.stringify(toolName)}，server="${serverName}"）；请传该 server 上的裸名（如 understand_image，不带 mcp__ 前缀）`,
+        `dsh_mcp_call: tool 参数疑似其他 MCP server 的注册全名（${JSON.stringify(toolName)}，server="${serverName}"）；请传该 server 上的裸名（如 understand_image，不带 mcp__ 前缀）`,
       )
     }
   }
@@ -78,7 +91,7 @@ export function normalizeToolName(serverName: string, toolName: string): string 
 }
 
 /**
- * 归一化 mcp_call 的 arguments 参数（2026-08-24 修补）：模型直连 Tool call 时倾向把
+ * 归一化 dsh_mcp_call 的 arguments 参数（2026-08-24 修补）：模型直连 Tool call 时倾向把
  * 参数字典填成 JSON 字符串（实测 flash 与 mimo 两系均会出现）。这里循环安全解析为对象
  * 后再透传。
  *
@@ -127,9 +140,9 @@ export function normalizeArguments(raw: unknown): unknown {
 export interface McpControlCtx {
   /** 空闲回收窗口（ms）。 */
   keepAliveMs: number
-  /** mcp_search 缺省 top-K。 */
+  /** dsh_mcp_search 缺省 top-K。 */
   searchLimitDefault: number
-  /** mcp_search top-K 上限。 */
+  /** dsh_mcp_search top-K 上限。 */
   searchLimitMax: number
   /** 能力摘要表（Config.serverSummary）。 */
   serverSummary: Record<string, string>
@@ -157,7 +170,7 @@ export interface McpControlCtx {
 
   /**
    * rc.1 standing 组合兜底超时（窄场景）：loader 有行但缺 toolCallTimeoutMs 时，
-   * 从 preset 快照补读。loader 无行（mcp_call 预设行）仍走「不在 loader 中」返回，
+   * 从 preset 快照补读。loader 无行（dsh_mcp_call 预设行）仍走「不在 loader 中」返回，
    * 预设行直通调用是后续修复，本 PR 定为仅面板修复（见 toggleMcp 预设分支注释）。
    * 返回 undefined = preset 也无该 server，调用方回退默认超时。
    * 调用方应做 TTL 缓存（inventory+resolve+read 较重），见 index.ts 闭包。
@@ -183,7 +196,7 @@ export interface McpCallController {
   accessFor(serverName: string, presetId: string | undefined, workspace: string | undefined): McpAccess
   /** 保活启用：disabled 时开启并记录 AI owner。返回本次是否由 AI 开启。 */
   ensureEnabled(serverName: string): Promise<boolean>
-  /** 该 server 当前是否由 AI 临时启用（mcp_call 保活中）——装配过滤据此保持其不可见。 */
+  /** 该 server 当前是否由 AI 临时启用（dsh_mcp_call 保活中）——装配过滤据此保持其不可见。 */
   isAiEnabled(serverName: string): boolean
   /**
    * 用户手动打开该 server：清除 AI 临时启用标记（aiEnabled/引用计数/lastUsed +
@@ -317,7 +330,7 @@ async function waitRegistered(
       pollTimer = ctx.timeout(check, REGISTER_POLL_MS)
     }
     offTools = ctx.root.on('tools/change', () => check())
-    // 上下文销毁 → 立即终局：此前无 dispose 监听时 Promise 永不 settle，会挂起 mcp_call。
+    // 上下文销毁 → 立即终局：此前无 dispose 监听时 Promise 永不 settle，会挂起 dsh_mcp_call。
     offDispose = ctx.effect(() => () => finish(new Error('context disposed')), 'mcp-panel: waitRegistered')
     // 调用方中止（exec.signal）→ 立即终局。
     if (signal) {
@@ -391,7 +404,7 @@ function bareNameOf(fullName: string): string {
 }
 
 /**
- * 该 server 的工具清单文本（`mcp_call` 只传 server、或工具名未知时返回）。
+ * 该 server 的工具清单文本（`dsh_mcp_call` 只传 server、或工具名未知时返回）。
  * 这是「仅名称」档位下模型发现工具的主要路径：不必猜名字，直接问。
  */
 function toolListText(caches: McpControlCtx, serverName: string): string {
@@ -399,13 +412,13 @@ function toolListText(caches: McpControlCtx, serverName: string): string {
   if (!listing.found || listing.totalCount === 0) {
     return (
       `MCP server "${serverName}" 目前没有采集到工具目录（可能尚未运行过或该 server 无工具）。` +
-      `可直接用 mcp_call 指定裸工具名尝试；或用 mcp_search({ server: "${serverName}" }) 重试。`
+      `可直接用 dsh_mcp_call 指定裸工具名尝试；或用 dsh_mcp_search({ server: "${serverName}" }) 重试。`
     )
   }
   const lines = listing.tools.map((tool) => `- ${bareNameOf(tool.name)}: ${tool.description || '（无描述）'}`)
   return (
     `MCP server "${serverName}" 的工具清单（共 ${listing.totalCount} 个）：\n${lines.join('\n')}\n\n` +
-    `调用方式：mcp_call({ server: "${serverName}", tool: "<上面的裸名>", arguments: { ... } })`
+    `调用方式：dsh_mcp_call({ server: "${serverName}", tool: "<上面的裸名>", arguments: { ... } })`
   )
 }
 
@@ -542,7 +555,7 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
         return text.length > 0 ? text : `MCP ${serverName}.${bareTool} 无返回内容`
       } catch (error) {
         failed = true
-        return `MCP ${serverName}.${bareTool} 调用异常：${msgOf(error)}（提示：tool 参数应传该 server 上的裸名；不确定工具名时可用 mcp_call 只传 server 获取工具清单）`
+        return `MCP ${serverName}.${bareTool} 调用异常：${msgOf(error)}（提示：tool 参数应传该 server 上的裸名；不确定工具名时可用 dsh_mcp_call 只传 server 获取工具清单）`
       } finally {
         if (entry) {
           const next = (state.refCounts.get(serverName) ?? 1) - 1
@@ -571,14 +584,14 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
   return controller
 }
 
-/* ── mcp_search ─────────────────────────────────────────────────────────── */
+/* ── dsh_mcp_search ─────────────────────────────────────────────────────────── */
 
 function clampLimit(value: number | undefined, defaultValue: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return defaultValue
   return Math.min(Math.floor(value), max)
 }
 
-/** 摘要截断长度：mcp_search 空查询的输出 token 控制（P2-5）。 */
+/** 摘要截断长度：dsh_mcp_search 空查询的输出 token 控制（P2-5）。 */
 const SUMMARY_MAX_LEN = 80
 
 /** server=X 的能力摘要：只预览前 N 个工具名（移植上游 18576e4，防一次回吐上百工具）。 */
@@ -656,12 +669,12 @@ export function buildServerListingResult(input: {
 
 function registerMcpSearchTool(ctx: Context, control: McpControlCtx): () => void {
   const definition = defineTool({
-    name: 'mcp_search',
+    name: MCP_SEARCH_TOOL,
     description:
       '检索可用的 MCP 服务器与工具目录（只读，不执行）。四种用法：① 空参数 → 当前会话可用的服务器索引；' +
       `② server=X → 该 server 的**能力摘要**（工具总数 + 前 ${LIST_PREVIEW_COUNT} 个名字预览，默认不返回全表）；` +
       '③ query + server → **在该 server 内**按需检索 top-K 命中（含完整 schema），想找某个 server 上的具体工具就用这个；' +
-      '④ query → 全目录关键词检索。查到工具名后用 mcp_call(server, tool, arguments) 调用；不要用 ② 拉全表' +
+      '④ query → 全目录关键词检索。查到工具名后用 dsh_mcp_call(server, tool, arguments) 调用；不要用 ② 拉全表' +
       '（只有 all:true 才返回完整清单，且分页）。只返回对当前 agent 预设开放且未彻底关闭的服务器。',
     parameters: {
       query: { type: 'string', description: '检索关键词，按工具名/描述/参数名打分' },
@@ -764,15 +777,15 @@ function toJson(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue
 }
 
-/* ── mcp_call ───────────────────────────────────────────────────────────── */
+/* ── dsh_mcp_call ───────────────────────────────────────────────────────────── */
 
 function registerMcpCallTool(ctx: Context, controller: McpCallController): () => void {
   const definition = defineTool({
-    name: 'mcp_call',
+    name: MCP_CALL_TOOL,
     description:
       '调用一个 MCP 服务器上的工具。自动保活启用目标 server（用完按 keepAliveMs 空闲回收），等待注册后在下层执行。参数透传给远端工具。',
     parameters: {
-      server: { type: 'string', required: true, description: 'MCP 服务器名（见 mcp_search 摘要）' },
+      server: { type: 'string', required: true, description: 'MCP 服务器名（见 dsh_mcp_search 摘要）' },
       tool: { type: 'string', required: true, description: '该 server 上的工具名（裸名，如 understand_image；误传注册全名 mcp__<server>__<tool> 会自动归一化）' },
       // 2026-09-18：原为 { type: 'json' }，编译后只剩 description、不带任何 type，
       // 等于没给模型引导：实测 [] 与 42 都能通过校验，模型也更容易整个跳过该字段。
@@ -804,7 +817,7 @@ function registerMcpCallTool(ctx: Context, controller: McpCallController): () =>
 }
 
 /**
- * 注册 mcp_search + mcp_call 两个模型工具。`controller` 必须是调用方持有的唯一
+ * 注册 dsh_mcp_search + dsh_mcp_call 两个模型工具。`controller` 必须是调用方持有的唯一
  * 控制层实例（与空闲回收器共享同一引用计数/owner 状态），否则回收与调用不同步。
  * 返回合并 disposer。
  */

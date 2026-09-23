@@ -11,8 +11,8 @@
  *
  * - `native`    → 该 server 的 `mcp__<s>__*` 工具全部保留（DSH 原生注入）
  * - `name-only` → 工具全部过滤，但 server 名与摘要进入「服务器索引段」
- * - `hidden`    → 工具过滤，索引段不出现（仅 mcp_search 可检索、mcp_call 可调用）
- * - `off`       → 工具过滤，索引段不出现，mcp_call 拒绝
+ * - `hidden`    → 工具过滤，索引段不出现（仅 dsh_mcp_search 可检索、dsh_mcp_call 可调用）
+ * - `off`       → 工具过滤，索引段不出现，dsh_mcp_call 拒绝
  *
  * 工具级禁用（`policy.disabledTools`）在 native 档下同样生效。
  * 未知 server（快照尚未覆盖）与畸形工具名保守保留，绝不误伤。
@@ -51,7 +51,7 @@ export interface AssemblyDeps {
   ctxForPreset: Context
   registry: Registry
   policy: PolicyStore
-  /** 该 server 当前是否处于 AI 保活窗口（mcp_call 临时启用中）。 */
+  /** 该 server 当前是否处于 AI 保活窗口（dsh_mcp_call 临时启用中）。 */
   isAiActive: (serverName: string) => boolean
   /** 该 server 的一句话摘要（catalog / config.serverSummary）。 */
   summaryOf: (serverName: string) => string | undefined
@@ -108,8 +108,8 @@ export function renderServerIndex(deps: AssemblyDeps, plan: AssemblyPlan): strin
     lines.push('## MCP 服务器（工具未直接注入，按需调用）')
     lines.push('')
     lines.push(
-      '下列 MCP 服务器已就绪但未把工具清单注入上下文。用 `mcp_call`（`server` + `tool` + `arguments`）直接调用；' +
-        '不确定工具名时用 `mcp_search` 传 `server` 查看该服务器的工具清单。',
+      '下列 MCP 服务器已就绪但未把工具清单注入上下文。用 `dsh_mcp_call`（`server` + `tool` + `arguments`）直接调用；' +
+        '不确定工具名时用 `dsh_mcp_search` 传 `server` 查看该服务器的工具清单。',
     )
     lines.push('')
     for (const server of plan.nameOnly) {
@@ -120,7 +120,7 @@ export function renderServerIndex(deps: AssemblyDeps, plan: AssemblyPlan): strin
   }
   if (plan.hiddenCount > 0) {
     if (lines.length > 0) lines.push('')
-    lines.push(`另有 ${plan.hiddenCount} 个 MCP 服务器未在此列出，可用 \`mcp_search\` 以关键词检索。`)
+    lines.push(`另有 ${plan.hiddenCount} 个 MCP 服务器未在此列出，可用 \`dsh_mcp_search\` 以关键词检索。`)
   }
   return lines.join('\n')
 }

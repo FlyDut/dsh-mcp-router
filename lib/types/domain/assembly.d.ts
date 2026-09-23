@@ -11,8 +11,8 @@
  *
  * - `native`    → 该 server 的 `mcp__<s>__*` 工具全部保留（DSH 原生注入）
  * - `name-only` → 工具全部过滤，但 server 名与摘要进入「服务器索引段」
- * - `hidden`    → 工具过滤，索引段不出现（仅 mcp_search 可检索、mcp_call 可调用）
- * - `off`       → 工具过滤，索引段不出现，mcp_call 拒绝
+ * - `hidden`    → 工具过滤，索引段不出现（仅 dsh_mcp_search 可检索、dsh_mcp_call 可调用）
+ * - `off`       → 工具过滤，索引段不出现，dsh_mcp_call 拒绝
  *
  * 工具级禁用（`policy.disabledTools`）在 native 档下同样生效。
  * 未知 server（快照尚未覆盖）与畸形工具名保守保留，绝不误伤。
@@ -41,7 +41,7 @@ export interface AssemblyDeps {
     ctxForPreset: Context;
     registry: Registry;
     policy: PolicyStore;
-    /** 该 server 当前是否处于 AI 保活窗口（mcp_call 临时启用中）。 */
+    /** 该 server 当前是否处于 AI 保活窗口（dsh_mcp_call 临时启用中）。 */
     isAiActive: (serverName: string) => boolean;
     /** 该 server 的一句话摘要（catalog / config.serverSummary）。 */
     summaryOf: (serverName: string) => string | undefined;

@@ -10,7 +10,7 @@
  * 3. **项目级行**：由 project-mcp.ts 扫描 `<workspace>/.dsh/mcps` 挂载，在 loader 行
  *    里以 `projmcp-*` id 出现，owner 工作空间由 project-mcp 的内存表给出。
  *
- * 装配层与 mcp_call 都在**同步**路径上工作（`system-prompt/assemble` 的 waterfall
+ * 装配层与 dsh_mcp_call 都在**同步**路径上工作（`system-prompt/assemble` 的 waterfall
  * 与 section provider 不能 await），因此本模块维护一份同步内存快照：
  * `refresh()` 异步重建，`snapshot()/refFor()` 同步读。快照尚未就绪时调用方保守放行
  * （保留工具），绝不因采不到而误伤。

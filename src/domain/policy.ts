@@ -3,7 +3,7 @@
  *
  * 两份内存表：
  * - **intent**：用户意图（持久化到 state.json 的 `servers` / `projects` 分区）。
- * - **effective**：当前运行时生效值（装配层、`mcp_search`、`mcp_call` 只读这一份）。
+ * - **effective**：当前运行时生效值（装配层、`dsh_mcp_search`、`dsh_mcp_call` 只读这一份）。
  *
  * 生效时机（`applyMode`）：
  * - `immediate`（默认）：`set()` 同时更新两份，并通知 `onEffectiveChanged` 调整进程状态。

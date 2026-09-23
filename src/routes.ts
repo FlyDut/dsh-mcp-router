@@ -30,7 +30,7 @@ import type { Config } from './index'
 import type { CatalogRuntime } from './runtime-types'
 import type { PolicyStore } from './domain/policy'
 import type { Registry } from './domain/registry'
-import { isExposure, normalizePresetScope, type Exposure, type PresetScope } from './domain/exposure'
+import { isExposure, normalizePresetScope, resolveToolBulkTargets, type Exposure, type PresetScope } from './domain/exposure'
 import { agentPresetId, agentWorkspace, lastSessionScope } from './domain/session-scope'
 import { describeImportedServer, knownMcpSources, parseExternalMcpConfig } from './domain/external-import'
 import { describeServer, removeServer, updateServer, maskConfigSecrets, type ServerConfigPatch } from './domain/mcp-edit'
@@ -501,6 +501,56 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
         await registry.refreshNow()
         invalidateMcp()
         return { serverName: parsed.serverName, toolName: parsed.toolName, disabled, disabledTools: next }
+      }, true),
+    },
+    {
+      kind: 'exact',
+      path: `${API_PREFIX}/mcp/toolBulk`,
+      handler: handle('POST', async (req) => {
+        // 工具级**批量**启停（移植上游 PR#17 特性 1）：一次 read-modify-write 写盘，
+        // 避免逐条 toolToggle 对 450 工具的 server 写 450 次 state.json。
+        const parsed = JSON.parse((await readBody(req)) || '{}') as {
+          serverName?: unknown
+          workspace?: unknown
+          disabled?: unknown
+          toolNames?: unknown
+        }
+        const serverName = typeof parsed.serverName === 'string' ? parsed.serverName.trim() : ''
+        if (serverName.length === 0) throw new Error('serverName is required')
+        if (typeof parsed.disabled !== 'boolean') throw new Error('disabled (boolean) is required')
+        const ref = registry.refFor(serverName, undefined)
+        const workspace =
+          typeof parsed.workspace === 'string' && parsed.workspace.length > 0 ? parsed.workspace : ref?.workspace
+        const known = (catalogRuntime.catalog[serverName]?.tools ?? []).map((tool) => String(tool.name))
+        if (known.length === 0) {
+          throw new Error(
+            `"${serverName}" 当前没有工具目录快照（可能从未启动过），无法批量启停工具；请先启动该 server 或刷新面板`,
+          )
+        }
+        const resolved = resolveToolBulkTargets(parsed.toolNames, known)
+        if (resolved.error) throw new Error(resolved.error)
+        const current = new Set(policy.effective(serverName, workspace).disabledTools)
+        for (const name of resolved.targets) {
+          if (parsed.disabled) current.add(name)
+          else current.delete(name)
+        }
+        const next = [...current].sort()
+        await policy.set({
+          serverName,
+          workspace,
+          patch: { disabledTools: next },
+          applyMode: stateApplyMode(await readState()),
+        })
+        await registry.refreshNow()
+        invalidateMcp()
+        return {
+          serverName,
+          disabled: parsed.disabled,
+          disabledTools: next,
+          disabledCount: next.length,
+          changed: resolved.targets.length,
+          ignoredToolNames: resolved.ignored,
+        }
       }, true),
     },
     {

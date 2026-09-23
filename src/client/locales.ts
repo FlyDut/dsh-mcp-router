@@ -3,8 +3,8 @@
  *
  * 术语约定（四档）：
  * - native     原生注入：工具清单直接进上下文（DSH 原生方式）
- * - name-only  仅名称：只暴露服务器名，工具经 mcp_call 按需调用
- * - hidden     隐藏：完全不进上下文，可 mcp_search 检索、mcp_call 按需调用
+ * - name-only  仅名称：只暴露服务器名，工具经 dsh_mcp_call 按需调用
+ * - hidden     隐藏：完全不进上下文，可 dsh_mcp_search 检索、dsh_mcp_call 按需调用
  * - off        关闭：不可见、不可搜索、不可调用
  */
 export const NS = 'mcp-panel'
@@ -28,12 +28,12 @@ export const en: Record<string, string> = {
   // middle layer + apply timing
   'mp.middleLayerTitle': 'AI middle layer',
   'mp.middleLayerDesc':
-    'mcp_search and mcp_call are always registered. Servers not set to "Native" stay out of the tool list and are used on demand: mcp_call enables a hidden server, calls it, then reaps it after an idle window. This never changes your per-turn tool list, so it never invalidates the prompt cache.',
+    'dsh_mcp_search and dsh_mcp_call are always registered. Servers not set to "Native" stay out of the tool list and are used on demand: dsh_mcp_call enables a hidden server, calls it, then reaps it after an idle window. This never changes your per-turn tool list, so it never invalidates the prompt cache.',
   'mp.applyTiming': 'Apply timing',
   'mp.applyImmediate': 'Immediate',
   'mp.applyNextSession': 'Next session',
   'mp.applyModeDesc':
-    "Applies to state changes (exposure / preset scope / tool toggles):\n· Immediate (default): the model-visible tool list changes on the next turn, invalidating this session's prefix cache from that turn onward (billed at miss rate, ~5-12.5× hit).\n· Next session: only the intent is recorded; the current session keeps its toolset for all remaining turns (zero cache invalidation) and applies at the next new session or after a DSH restart.\n· Both modes: on-demand calls through the middle layer (mcp_search / mcp_call) always work and never cause a cache miss.",
+    "Applies to state changes (exposure / preset scope / tool toggles):\n· Immediate (default): the model-visible tool list changes on the next turn, invalidating this session's prefix cache from that turn onward (billed at miss rate, ~5-12.5× hit).\n· Next session: only the intent is recorded; the current session keeps its toolset for all remaining turns (zero cache invalidation) and applies at the next new session or after a DSH restart.\n· Both modes: on-demand calls through the middle layer (dsh_mcp_search / dsh_mcp_call) always work and never cause a cache miss.",
   'mp.applyPendingBtn': 'Apply pending now',
   'mp.applyDeferredHint': 'Intent recorded; it takes effect at the next new session or after a DSH restart.',
   'mp.appliedPending': 'Applied {n} pending change(s).',
@@ -57,10 +57,10 @@ export const en: Record<string, string> = {
   'mp.exposureNativeHint': 'Every tool schema is injected into the context (classic DSH behaviour); the process runs.',
   'mp.exposureNameOnly': 'Name only',
   'mp.exposureNameOnlyHint':
-    'Only the server name is injected (a one-line index). The process runs; call tools on demand via mcp_call, which returns the tool list when the tool name is omitted.',
+    'Only the server name is injected (a one-line index). The process runs; call tools on demand via dsh_mcp_call, which returns the tool list when the tool name is omitted.',
   'mp.exposureHidden': 'Hidden',
   'mp.exposureHiddenHint':
-    'Nothing is injected and the process is stopped. Discoverable via mcp_search and callable via mcp_call (keep-alive enable + idle reap).',
+    'Nothing is injected and the process is stopped. Discoverable via dsh_mcp_search and callable via dsh_mcp_call (keep-alive enable + idle reap).',
   'mp.exposureOff': 'Off',
   'mp.exposureOffHint': 'Completely off: invisible, not searchable, not callable.',
   'mp.effective': 'now: {mode}',
@@ -70,7 +70,7 @@ export const en: Record<string, string> = {
   'mp.presetMode.only': 'Only these',
   'mp.presetMode.except': 'All except',
   'mp.presetsHint':
-    'Runtime isolation: this server keeps running in the background; sessions on other presets simply cannot see or call it (and it never appears in mcp_search for them).',
+    'Runtime isolation: this server keeps running in the background; sessions on other presets simply cannot see or call it (and it never appears in dsh_mcp_search for them).',
   'mp.presetsEmpty': 'No presets available.',
   'mp.presetsUnavailable': 'Preset list unavailable ({error}); configured ids are still shown and enforced.',
   'mp.presetGone': 'no longer exists',
@@ -84,6 +84,15 @@ export const en: Record<string, string> = {
   'mp.projectBadge': 'Project',
   'mp.enable': 'Enable',
   'mp.disable': 'Disable',
+  // tool-level bulk controls
+  'mp.toolFilterPlaceholder': 'Filter by name / description',
+  'mp.disableAllTools': 'Disable all',
+  'mp.enableAllTools': 'Enable all',
+  'mp.disableFilteredTools': 'Disable {n} matched',
+  'mp.enableFilteredTools': 'Enable {n} matched',
+  'mp.toolFilterEmpty': 'No tool matches the filter.',
+  'mp.toolBulkApplied': 'Applied to {n} tool(s){ignored}',
+  'mp.toolBulkIgnored': '; {n} named tool(s) are not in the current directory and were ignored',
   // toolbar buttons (brief labels; full wording lives in the tooltips)
   'mp.addBtn': 'Add',
   'mp.addBtnHint': 'Add an MCP server by pasting mcpServers JSON (global or project target)',
@@ -172,12 +181,12 @@ export const zh: Record<string, string> = {
   // 中间层 + 生效时机
   'mp.middleLayerTitle': 'AI 中间层',
   'mp.middleLayerDesc':
-    'mcp_search 与 mcp_call 常驻。未设为「原生注入」的服务器不进工具清单，需要时按需调用：mcp_call 会临时启用被隐藏的服务器、调用、再按空闲窗口回收。这条路径不改变模型可见的工具集，因此不会造成前缀缓存失效。',
+    'dsh_mcp_search 与 dsh_mcp_call 常驻。未设为「原生注入」的服务器不进工具清单，需要时按需调用：dsh_mcp_call 会临时启用被隐藏的服务器、调用、再按空闲窗口回收。这条路径不改变模型可见的工具集，因此不会造成前缀缓存失效。',
   'mp.applyTiming': '生效时机',
   'mp.applyImmediate': '立即生效',
   'mp.applyNextSession': '下次会话生效',
   'mp.applyModeDesc':
-    '作用于状态变更（档位 / 预设关联 / 工具级禁用）：\n· 立即生效（默认）：下一轮对话就改变模型看到的工具集，该轮起本会话前缀缓存 100% 失效、按 miss 费率计费（约为 hit 的 5~12.5 倍）。\n· 下次会话生效：只记录意图，当前会话全程工具集不变（零缓存失效），到新开一个会话（其首次请求前）或重启 DSH 才生效。\n· 两者共同点：中间层按需调用（mcp_search / mcp_call）始终可用，且不改变每轮请求前缀，永不造成缓存 miss。',
+    '作用于状态变更（档位 / 预设关联 / 工具级禁用）：\n· 立即生效（默认）：下一轮对话就改变模型看到的工具集，该轮起本会话前缀缓存 100% 失效、按 miss 费率计费（约为 hit 的 5~12.5 倍）。\n· 下次会话生效：只记录意图，当前会话全程工具集不变（零缓存失效），到新开一个会话（其首次请求前）或重启 DSH 才生效。\n· 两者共同点：中间层按需调用（dsh_mcp_search / dsh_mcp_call）始终可用，且不改变每轮请求前缀，永不造成缓存 miss。',
   'mp.applyPendingBtn': '立即应用待生效变更',
   'mp.applyDeferredHint': '已记录意图，将在下次（新）会话或 DSH 重启后生效。',
   'mp.appliedPending': '已应用 {n} 项待生效变更。',
@@ -200,10 +209,10 @@ export const zh: Record<string, string> = {
   'mp.exposureNativeHint': '全部工具 schema 直接注入上下文（DSH 原生方式）；进程保持运行。',
   'mp.exposureNameOnly': '仅名称',
   'mp.exposureNameOnlyHint':
-    '上下文只注入服务器名（一行索引）；进程保持运行，工具经 mcp_call 按需调用（不传工具名即返回该服务器的工具清单）。',
+    '上下文只注入服务器名（一行索引）；进程保持运行，工具经 dsh_mcp_call 按需调用（不传工具名即返回该服务器的工具清单）。',
   'mp.exposureHidden': '隐藏',
   'mp.exposureHiddenHint':
-    '完全不注入上下文，进程停用；可用 mcp_search 关键词检索到，并用 mcp_call 按需调用（保活启用 + 空闲回收）。',
+    '完全不注入上下文，进程停用；可用 dsh_mcp_search 关键词检索到，并用 dsh_mcp_call 按需调用（保活启用 + 空闲回收）。',
   'mp.exposureOff': '关闭',
   'mp.exposureOffHint': '彻底关闭：不可见、不可搜索、不可调用。',
   'mp.effective': '当前生效：{mode}',
@@ -213,7 +222,7 @@ export const zh: Record<string, string> = {
   'mp.presetMode.only': '仅以下预设',
   'mp.presetMode.except': '排除以下预设',
   'mp.presetsHint':
-    '运行时隔离：该服务器仍在后台运行，只是其他预设的会话看不到、也调不到它（mcp_search 同样不返回）。无需为不同会话反复开关进程。',
+    '运行时隔离：该服务器仍在后台运行，只是其他预设的会话看不到、也调不到它（dsh_mcp_search 同样不返回）。无需为不同会话反复开关进程。',
   'mp.presetsEmpty': '暂无可关联的预设。',
   'mp.presetsUnavailable': '预设列表不可得（{error}）；已配置的 id 仍会显示并继续生效。',
   'mp.presetGone': '已不存在',
@@ -227,6 +236,15 @@ export const zh: Record<string, string> = {
   'mp.projectBadge': '项目',
   'mp.enable': '启用',
   'mp.disable': '禁用',
+  // 工具级批量控件
+  'mp.toolFilterPlaceholder': '按名称 / 描述过滤',
+  'mp.disableAllTools': '全部禁用',
+  'mp.enableAllTools': '全部启用',
+  'mp.disableFilteredTools': '禁用命中 {n} 个',
+  'mp.enableFilteredTools': '启用命中 {n} 个',
+  'mp.toolFilterEmpty': '没有工具匹配该过滤条件。',
+  'mp.toolBulkApplied': '已处理 {n} 个工具{ignored}',
+  'mp.toolBulkIgnored': '；另有 {n} 项不在当前工具目录中，已忽略',
   // 顶部按钮（文字简短，完整说明在悬停提示里）
   'mp.addBtn': '添加',
   'mp.addBtnHint': '粘贴 mcpServers JSON 添加一个 MCP（可选全局或项目目标）',

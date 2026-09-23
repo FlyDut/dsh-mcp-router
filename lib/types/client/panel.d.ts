@@ -6,7 +6,8 @@
  * 样式全部 JS 内联（宿主全局 CSS 可能覆盖注入的 class），颜色走 --dsw-alias-* 主题变量。
  */
 import React from 'react';
-interface Props {
+import { type SessionHookProps } from './session-param';
+interface Props extends SessionHookProps {
     /** 由 locale 插槽注入：NS 字典的翻译函数 */
     t: (key: string, params?: Record<string, string | number>) => string;
     close?: () => void;

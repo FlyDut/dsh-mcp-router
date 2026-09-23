@@ -7,7 +7,7 @@
  *
  * ── 四档语义（每 server 一个档位，同时决定进程期望状态）──────────────────
  *
- * | exposure    | 进程            | 上下文注入              | mcp_search            | mcp_call |
+ * | exposure    | 进程            | 上下文注入              | dsh_mcp_search            | dsh_mcp_call |
  * |-------------|-----------------|-------------------------|-----------------------|----------|
  * | `native`    | 运行            | 全部 mcp__<s>__* schema | 摘要表列出（已注入）   | 可调用   |
  * | `name-only` | 运行            | 无工具，仅 server 名索引 | 摘要表列出            | 可调用   |
@@ -16,7 +16,7 @@
  *
  * `native` / `name-only` 期望进程运行；`hidden` / `off` 期望进程停用（由
  * {@link desiredRunning} 派生，用户切档位即隐式启停）。`hidden` 的 server 仍可被
- * 模型经 `mcp_call` 保活启用（临时运行 → 调用 → 空闲回收），这正是「完全被中间层
+ * 模型经 `dsh_mcp_call` 保活启用（临时运行 → 调用 → 空闲回收），这正是「完全被中间层
  * 托管」的语义；`off` 连这条路径也关掉。
  *
  * ── 预设关联（运行时隔离，不改变物理状态）──────────────────────────────
@@ -70,19 +70,19 @@ export interface ExposureInput {
     policy: ServerPolicy;
     /** loader entry 当前是否在运行（!disabled）。 */
     running: boolean;
-    /** 该 server 当前是否处于 AI 保活窗口（mcp_call 临时启用中）。 */
+    /** 该 server 当前是否处于 AI 保活窗口（dsh_mcp_call 临时启用中）。 */
     aiActive: boolean;
     /** 当前会话的 agent 预设 id（undefined = 无 preset）。 */
     presetId: string | null | undefined;
 }
 /**
- * 有效曝光判定 —— 装配层、`mcp_search`、`mcp_call`、面板徽标共用这一个函数。
+ * 有效曝光判定 —— 装配层、`dsh_mcp_search`、`dsh_mcp_call`、面板徽标共用这一个函数。
  *
  * 判定顺序（先隔离、再档位、最后运行态降级）：
  * 1. 预设不允许 → `off`（运行时隔离，物理状态不变）；
  * 2. `off` / `hidden` 档 → 原样返回；
  * 3. `native` / `name-only` 档：进程在跑且非 AI 保活窗口 → 原档；否则降级为
- *    `hidden`（进程未跑或正被中间层托管：工具不注入，但仍可经 mcp_call 调用，
+ *    `hidden`（进程未跑或正被中间层托管：工具不注入，但仍可经 dsh_mcp_call 调用，
  *    不静默丢失能力）。
  */
 export declare function decideExposure(input: ExposureInput): Exposure;
@@ -100,12 +100,28 @@ export type Injection = 'tools' | 'name' | 'none';
 export declare function injectionOf(effective: Exposure): Injection;
 /** 该有效曝光下该 server 的工具是否进入模型目录。 */
 export declare function injectsTools(effective: Exposure): boolean;
-/** 该有效曝光下模型是否可经 mcp_call 调用该 server（`off` 拒绝）。 */
+/** 该有效曝光下模型是否可经 dsh_mcp_call 调用该 server（`off` 拒绝）。 */
 export declare function callableUnder(effective: Exposure): boolean;
-/** 该有效曝光下该 server 是否出现在 mcp_search 的无参摘要表。 */
+/** 该有效曝光下该 server 是否出现在 dsh_mcp_search 的无参摘要表。 */
 export declare function listedInSummary(effective: Exposure): boolean;
 /** 工具注册全名是否被策略禁用（工具级禁用，native 档下同样生效）。 */
 export declare function policyDisablesTool(policy: ServerPolicy | undefined, fullName: string): boolean;
+/**
+ * 工具级**批量**启停的目标解析（三态契约，纯函数；移植上游 PR#17 特性 1 的 BLOCK-1 修法）。
+ *
+ * 契约故意严格 —— 面板「按当前过滤批量操作」在过滤命中 0 项时天然会发 `[]`，
+ * 若把它当成「全部」，对一个 450 工具的 server 就是一次性全量禁用**并已写盘**，
+ * 与用户意图完全相反：
+ * - `toolNames === undefined`（字段缺失）= 全部已知工具，**只有这一种**表示全部；
+ * - 显式数组 = 精确集合（`[]` 是合法空操作）；
+ * - 非数组 / 含非字符串项 / 非空却一条都不匹配 = 返回 error（调用方 400），
+ *   既不静默降级为「全部」，也不静默 no-op。
+ */
+export declare function resolveToolBulkTargets(raw: unknown, known: readonly string[]): {
+    targets: string[];
+    ignored: string[];
+    error?: string;
+};
 /** state.json v1 中与策略相关的字段（迁移读取用）。 */
 export interface V1PolicySource {
     mcp?: Record<string, Record<string, {

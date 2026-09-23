@@ -26,7 +26,7 @@ export type StateFile = {
     servers?: Record<string, ServerPolicyState>;
     /** v2：工作空间 → serverName → 策略（项目级 MCP）。 */
     projects?: Record<string, Record<string, ServerPolicyState>>;
-    /** AI 自动启用标记（mcp_call 保活启用）：entryId → 上次启用时间。 */
+    /** AI 自动启用标记（dsh_mcp_call 保活启用）：entryId → 上次启用时间。 */
     ai?: Record<string, {
         at: number;
     }>;

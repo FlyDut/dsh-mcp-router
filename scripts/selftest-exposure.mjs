@@ -109,7 +109,7 @@ check('decideExposure：native 运行中 → native（原生注入）', () => {
   assert.equal(decide('native', true, false, 'coding'), 'native')
 })
 
-check('decideExposure：native 未运行 / AI 保活中 → 降级 hidden（仍可 mcp_call）', () => {
+check('decideExposure：native 未运行 / AI 保活中 → 降级 hidden（仍可 dsh_mcp_call）', () => {
   assert.equal(decide('native', false, false, 'coding'), 'hidden')
   assert.equal(decide('native', true, true, 'coding'), 'hidden')
 })
@@ -283,6 +283,38 @@ check('migrateV1Policies：输出按键排序（落盘 diff 稳定）', () => {
 check('migrateV1Policies：空 v1 输入 → 空输出（幂等起点）', () => {
   const result = x.migrateV1Policies({}, resolveRow, true)
   assert.deepEqual(result, { servers: {}, projects: {}, migrated: 0, unresolved: [] })
+})
+
+/* ── 工具级批量启停的目标解析（三态契约，上游 PR#17 BLOCK-1）──────────── */
+
+check('resolveToolBulkTargets：undefined = 全部（唯一表示全体的形态）', () => {
+  const known = ['mcp__a__t1', 'mcp__a__t2']
+  assert.deepEqual(x.resolveToolBulkTargets(undefined, known), { targets: known, ignored: [] })
+})
+
+check('resolveToolBulkTargets：显式数组 = 精确集合（[] 是合法空操作，不是「全部」）', () => {
+  const known = ['mcp__a__t1', 'mcp__a__t2', 'mcp__a__t3']
+  const empty = x.resolveToolBulkTargets([], known)
+  assert.deepEqual(empty.targets, [], '显式 [] 绝不能被当成「全部」')
+  assert.equal(empty.error, undefined)
+  const exact = x.resolveToolBulkTargets(['mcp__a__t2'], known)
+  assert.deepEqual(exact.targets, ['mcp__a__t2'])
+  assert.deepEqual(exact.ignored, [])
+  // 去重 + 未命中项回传（目录漂移可见化）
+  const mixed = x.resolveToolBulkTargets(['mcp__a__t1', 'mcp__a__t1', 'mcp__a__gone'], known)
+  assert.deepEqual(mixed.targets, ['mcp__a__t1'])
+  assert.deepEqual(mixed.ignored, ['mcp__a__gone'])
+})
+
+check('resolveToolBulkTargets：非数组 / 非字符串项 / 非空却零命中 → error（不静默降级）', () => {
+  const known = ['mcp__a__t1']
+  assert.ok(x.resolveToolBulkTargets('mcp__a__t1', known).error, '字符串不是数组 → 拒绝')
+  assert.ok(x.resolveToolBulkTargets(null, known).error, 'null → 拒绝')
+  assert.ok(x.resolveToolBulkTargets(['mcp__a__t1', 42], known).error, '混入非字符串 → 拒绝')
+  assert.ok(x.resolveToolBulkTargets([''], known).error, '空字符串项 → 拒绝')
+  const none = x.resolveToolBulkTargets(['mcp__b__x'], known)
+  assert.ok(none.error, '非空数组却零命中 → 拒绝（否则用户以为动了 N 条，实际 0 条）')
+  assert.deepEqual(none.ignored, ['mcp__b__x'])
 })
 
 if (failed) process.exit(1)

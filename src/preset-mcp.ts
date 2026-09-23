@@ -4,7 +4,7 @@
  * 背景：dsh 0.1.2-rc.1 起 preset 行挂在 standing 组合（agent scope 树），不再进
  * `ctx.loader.entries()`（实证 host/agent loader 156 行零 MCP，而
  * `compositionInventory()` 显示 standard-mcp 10 行、filesystem fiberState=2 运行中）。
- * collectMcp 只扫 loader → mcp[]==0 空面板；mcp_call 也因 findMcpEntry miss 而
+ * collectMcp 只扫 loader → mcp[]==0 空面板；dsh_mcp_call 也因 findMcpEntry miss 而
  * 报「不在 loader 中」。
  *
  * 本模块只经 `ctx.agentPresets` 服务读数（compositionInventory/resolve/read），

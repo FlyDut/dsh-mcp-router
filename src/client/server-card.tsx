@@ -22,6 +22,8 @@ export interface ServerCardProps {
   submit: (updates: Array<Record<string, unknown>>, key: string) => void
   /** 工具级禁用开关（走 /mcp/toolToggle）。 */
   toggleTool: (row: McpRow, tool: McpToolInfo) => void
+  /** 工具级批量启停（走 /mcp/toolBulk）；`toolNames === undefined` = 服务端权威目录里的「全部工具」。 */
+  toolBulk: (row: McpRow, toolNames: string[] | undefined, disabled: boolean) => void
   /** 编辑该行的配置源（弹窗）。 */
   onEdit: (row: McpRow) => void
   /** 删除该行（弹窗二次确认）。 */
@@ -101,6 +103,30 @@ const C = {
     borderRadius: 999,
     padding: '1px 8px',
   },
+  toolBar: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' as const, fontSize: 11 },
+  toolFilter: {
+    flex: '1 1 140px',
+    minWidth: 110,
+    font: 'inherit',
+    fontSize: 11,
+    padding: '3px 8px',
+    borderRadius: 6,
+    color: 'var(--dsw-alias-label-primary)',
+    background: 'color-mix(in srgb, var(--dsw-alias-label-primary) 7%, transparent)',
+    border: '1px solid var(--dsw-alias-border-l2)',
+  },
+  toolBulkBtn: (disabled: boolean): React.CSSProperties => ({
+    font: 'inherit',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    border: '1px solid var(--dsw-alias-border-l2)',
+    borderRadius: 6,
+    padding: '3px 8px',
+    fontSize: 11,
+    opacity: disabled ? 0.5 : 1,
+    color: 'var(--dsw-alias-label-secondary)',
+    background: 'var(--dsw-alias-bg-layer-1)',
+    whiteSpace: 'nowrap' as const,
+  }),
   toolList: {
     marginTop: 2,
     borderTop: '1px solid var(--dsw-alias-border-l2)',
@@ -146,6 +172,9 @@ const C = {
 /** 四档在 UI 上的顺序与 i18n 后缀。 */
 const EXPOSURE_ORDER: Exposure[] = ['native', 'name-only', 'hidden', 'off']
 
+/** 工具批量操作的 busy key 后缀（与单工具 key `${entryId}:${toolName}` 区分）。 */
+export const TOOL_BULK_KEY = '__bulk__'
+
 function exposureKey(exposure: Exposure, kind: 'label' | 'hint'): string {
   const suffix = exposure === 'name-only' ? 'NameOnly' : exposure === 'native' ? 'Native' : exposure === 'hidden' ? 'Hidden' : 'Off'
   return `mp.exposure${suffix}${kind === 'label' ? '' : 'Hint'}`
@@ -169,12 +198,26 @@ function formatK(n: number): string {
 }
 
 export function ServerCard(props: ServerCardProps): React.ReactElement {
-  const { row, t, presets, presetsError, busy, toolBusy, submit, toggleTool, onEdit, onRemove } = props
+  const { row, t, presets, presetsError, busy, toolBusy, submit, toggleTool, toolBulk, onEdit, onRemove } = props
   const [presetOpen, setPresetOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [toolFilter, setToolFilter] = useState('')
   const st = statusBadge(t, row)
   const toolList = row.toolList ?? []
   const scope = row.presetScope
+  const bulkBusy = Boolean(toolBusy[`${row.entryId}:${TOOL_BULK_KEY}`])
+  const toolQuery = toolFilter.trim().toLowerCase()
+  const filteredTools =
+    toolQuery.length === 0
+      ? toolList
+      : toolList.filter(
+          (tool) => tool.name.toLowerCase().includes(toolQuery) || tool.description.toLowerCase().includes(toolQuery),
+        )
+  /** 从注册全名剥出裸工具名（serverName 本身可能含下划线，不能用 `[^_]+`）。 */
+  const bareToolName = (fullName: string): string => {
+    const prefix = `mcp__${row.serverName}__`
+    return fullName.startsWith(prefix) ? fullName.slice(prefix.length) : fullName
+  }
 
   const setExposure = (exposure: Exposure): void => {
     if (exposure === row.exposure) return
@@ -341,7 +384,54 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
 
       {toolList.length > 0 && toolsOpen && (
             <div style={C.toolList}>
-              {toolList.map((tool) => {
+              <div style={C.toolBar}>
+                <input
+                  type="text"
+                  value={toolFilter}
+                  onChange={(event) => setToolFilter(event.target.value)}
+                  placeholder={t('mp.toolFilterPlaceholder')}
+                  style={C.toolFilter}
+                />
+                <button
+                  type="button"
+                  style={C.toolBulkBtn(bulkBusy)}
+                  disabled={bulkBusy}
+                  onClick={() => toolBulk(row, undefined, true)}
+                >
+                  {t('mp.disableAllTools')}
+                </button>
+                <button
+                  type="button"
+                  style={C.toolBulkBtn(bulkBusy)}
+                  disabled={bulkBusy}
+                  onClick={() => toolBulk(row, undefined, false)}
+                >
+                  {t('mp.enableAllTools')}
+                </button>
+                {toolQuery.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      style={C.toolBulkBtn(bulkBusy || filteredTools.length === 0)}
+                      disabled={bulkBusy || filteredTools.length === 0}
+                      onClick={() => toolBulk(row, filteredTools.map((tool) => tool.name), true)}
+                    >
+                      {t('mp.disableFilteredTools', { n: filteredTools.length })}
+                    </button>
+                    <button
+                      type="button"
+                      style={C.toolBulkBtn(bulkBusy || filteredTools.length === 0)}
+                      disabled={bulkBusy || filteredTools.length === 0}
+                      onClick={() => toolBulk(row, filteredTools.map((tool) => tool.name), false)}
+                    >
+                      {t('mp.enableFilteredTools', { n: filteredTools.length })}
+                    </button>
+                  </>
+                )}
+                {bulkBusy && <span style={C.toolDesc}>{t('mp.working')}</span>}
+              </div>
+              {filteredTools.length === 0 && <div style={C.toolDesc}>{t('mp.toolFilterEmpty')}</div>}
+              {filteredTools.map((tool) => {
                 const key = `${row.entryId}:${tool.name}`
                 const tBusy = Boolean(toolBusy[key])
                 return (
@@ -349,12 +439,12 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
                     <button
                       type="button"
                       style={{ ...C.toolSwitch(tool.disabled), ...(tBusy ? C.busy : {}) }}
-                      disabled={tBusy}
+                      disabled={tBusy || bulkBusy}
                       onClick={() => toggleTool(row, tool)}
                     >
                       {tBusy ? t('mp.working') : tool.disabled ? t('mp.enable') : t('mp.disable')}
                     </button>
-                    <span style={C.toolName}>{tool.name.replace(/^mcp__[^_]+__/, '')}</span>
+                    <span style={C.toolName}>{bareToolName(tool.name)}</span>
                     <span style={C.toolDesc}>{tool.description || '—'}</span>
                   </div>
                 )

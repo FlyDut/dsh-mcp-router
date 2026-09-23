@@ -21,7 +21,19 @@ export interface McpAccess {
     blockedBy: 'none' | 'preset' | 'exposure' | 'workspace' | 'unknown';
 }
 /**
- * 归一化 mcp_call 的 tool 参数（2026-08-22 修补）：模型可能把 mcp_search 返回的
+ * 控制工具名（单一事实源）。
+ *
+ * ⚠️ 名字**不得以 `mcp_` 开头**：claude.ai 订阅网关把 `mcp_` 前缀当作 connector
+ * 保留名，工具表里含旧名（`mcp_search` / `mcp_call`）会让整个请求 400 并伪报配额
+ * 耗尽（上游 PR #16 的 A/B/A 取证：含这两个工具 5/5 全 400，不含 111/111 成功）。
+ * selftest-mcp.mjs 有护栏断言，防止日后改回去。
+ */
+export declare const MCP_SEARCH_TOOL = "dsh_mcp_search";
+export declare const MCP_CALL_TOOL = "dsh_mcp_call";
+/** 中间层注册的两个控制工具名（装配层/网关按此判定控制工具）。 */
+export declare const CONTROL_TOOL_NAMES: ReadonlySet<string>;
+/**
+ * 归一化 dsh_mcp_call 的 tool 参数（2026-08-22 修补）：模型可能把 dsh_mcp_search 返回的
  * 注册全名（mcp__<server>__<tool>）直接填入 tool，无条件拼接会生成双重前缀。
  * 规则：以 mcp__ 开头视为注册全名形态 → 循环剥离本 server 前缀（兼容嵌套重复）；
  * 剥完仍以 mcp__ 开头 → 传的是其他 server 的注册全名或格式异常 → 快速失败
@@ -30,7 +42,7 @@ export interface McpAccess {
  */
 export declare function normalizeToolName(serverName: string, toolName: string): string;
 /**
- * 归一化 mcp_call 的 arguments 参数（2026-08-24 修补）：模型直连 Tool call 时倾向把
+ * 归一化 dsh_mcp_call 的 arguments 参数（2026-08-24 修补）：模型直连 Tool call 时倾向把
  * 参数字典填成 JSON 字符串（实测 flash 与 mimo 两系均会出现）。这里循环安全解析为对象
  * 后再透传。
  *
@@ -51,9 +63,9 @@ export declare function normalizeArguments(raw: unknown): unknown;
 export interface McpControlCtx {
     /** 空闲回收窗口（ms）。 */
     keepAliveMs: number;
-    /** mcp_search 缺省 top-K。 */
+    /** dsh_mcp_search 缺省 top-K。 */
     searchLimitDefault: number;
-    /** mcp_search top-K 上限。 */
+    /** dsh_mcp_search top-K 上限。 */
     searchLimitMax: number;
     /** 能力摘要表（Config.serverSummary）。 */
     serverSummary: Record<string, string>;
@@ -78,7 +90,7 @@ export interface McpControlCtx {
     serverTimeoutMs(serverName: string): number;
     /**
      * rc.1 standing 组合兜底超时（窄场景）：loader 有行但缺 toolCallTimeoutMs 时，
-     * 从 preset 快照补读。loader 无行（mcp_call 预设行）仍走「不在 loader 中」返回，
+     * 从 preset 快照补读。loader 无行（dsh_mcp_call 预设行）仍走「不在 loader 中」返回，
      * 预设行直通调用是后续修复，本 PR 定为仅面板修复（见 toggleMcp 预设分支注释）。
      * 返回 undefined = preset 也无该 server，调用方回退默认超时。
      * 调用方应做 TTL 缓存（inventory+resolve+read 较重），见 index.ts 闭包。
@@ -95,7 +107,7 @@ export interface McpCallController {
     accessFor(serverName: string, presetId: string | undefined, workspace: string | undefined): McpAccess;
     /** 保活启用：disabled 时开启并记录 AI owner。返回本次是否由 AI 开启。 */
     ensureEnabled(serverName: string): Promise<boolean>;
-    /** 该 server 当前是否由 AI 临时启用（mcp_call 保活中）——装配过滤据此保持其不可见。 */
+    /** 该 server 当前是否由 AI 临时启用（dsh_mcp_call 保活中）——装配过滤据此保持其不可见。 */
     isAiEnabled(serverName: string): boolean;
     /**
      * 用户手动打开该 server：清除 AI 临时启用标记（aiEnabled/引用计数/lastUsed +
@@ -132,7 +144,7 @@ export declare function buildServerListingResult(input: {
     pageSize?: number;
 }): Record<string, unknown>;
 /**
- * 注册 mcp_search + mcp_call 两个模型工具。`controller` 必须是调用方持有的唯一
+ * 注册 dsh_mcp_search + dsh_mcp_call 两个模型工具。`controller` 必须是调用方持有的唯一
  * 控制层实例（与空闲回收器共享同一引用计数/owner 状态），否则回收与调用不同步。
  * 返回合并 disposer。
  */

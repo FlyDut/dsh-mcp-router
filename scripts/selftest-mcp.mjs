@@ -13,6 +13,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const catalog = await import(pathToFileURL(join(root, 'lib', 'catalog.js')).href)
 const index = await import(pathToFileURL(join(root, 'lib', 'index.js')).href)
 const convert = await import(pathToFileURL(join(root, 'lib', 'mcp-convert.js')).href)
+const sessionParam = await import(pathToFileURL(join(root, 'lib', 'session-param.js')).href)
 
 let failed = false
 const check = (label, fn) => {
@@ -36,7 +37,19 @@ const checkAsync = async (label, fn) => {
   }
 }
 
-// mcp_call 前缀归一化（2026-08-22 修补：双重前缀缺陷回归测试）
+// 控制工具名护栏（上游 PR#16）：名字一旦回到 mcp_ 前缀，claude.ai 订阅网关会把整个
+// 请求判 400 并伪报配额耗尽 —— 这是实测过的线上故障，必须由自测锁住。
+check('控制工具名护栏：dsh_ 前缀 + 单一事实源（不得以 mcp_ 开头）', () => {
+  assert.equal(index.MCP_SEARCH_TOOL, 'dsh_mcp_search')
+  assert.equal(index.MCP_CALL_TOOL, 'dsh_mcp_call')
+  for (const name of [index.MCP_SEARCH_TOOL, index.MCP_CALL_TOOL]) {
+    assert.ok(!name.startsWith('mcp_'), `${name} 不得以 mcp_ 开头`)
+    assert.ok(index.CONTROL_TOOL_NAMES.has(name), `${name} 应在 CONTROL_TOOL_NAMES 中`)
+  }
+  assert.equal(index.CONTROL_TOOL_NAMES.size, 2)
+})
+
+// dsh_mcp_call 前缀归一化（2026-08-22 修补：双重前缀缺陷回归测试）
 check('normalizeToolName：裸名原样透传', () => {
   assert.equal(index.normalizeToolName('exa', 'web_search_exa'), 'web_search_exa')
 })
@@ -50,7 +63,7 @@ check('normalizeToolName：其他 server 注册全名快速失败', () => {
   assert.throws(() => index.normalizeToolName('exa', 'mcp__mimo-image__understand_image'), /裸名/)
 })
 
-// mcp_call arguments 归一化 + 错误呈现（2026-08-24 修补：参数双编码与 [object Object] 缺陷回归）
+// dsh_mcp_call arguments 归一化 + 错误呈现（2026-08-24 修补：参数双编码与 [object Object] 缺陷回归）
 check('normalizeArguments：对象原样透传（同引用）', () => {
   const input = { path: 'a.md', n: 1 }
   assert.equal(index.normalizeArguments(input), input)
@@ -148,7 +161,40 @@ check('searchCatalog 空 query 返回空；limit 被尊重', () => {
   assert.ok(all.length >= 4)
 })
 
-check('mcp_search server=X：默认只回能力摘要（前 5 个预览），不返回全表', () => {
+// ── 会话透传（移植上游 74ed18e）───────────────────────────────────────
+
+check('withSessionParam：有会话才追加；拿不到会话时 URL 与旧版逐字节相同', () => {
+  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', 'abc'), '/api/mcp-panel/state?session=abc')
+  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state?x=1', 'abc'), '/api/mcp-panel/state?x=1&session=abc')
+  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', 'a b&c'), '/api/mcp-panel/state?session=a%20b%26c')
+  // 降级路径必须与旧请求完全一致（可独立 revert）
+  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', undefined), '/api/mcp-panel/state')
+  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', ''), '/api/mcp-panel/state')
+  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', null), '/api/mcp-panel/state')
+})
+
+check('readCurrentSession：无 hook / hook 抛错 / 非字符串 一律降级 undefined', () => {
+  assert.equal(sessionParam.readCurrentSession({}), undefined)
+  assert.equal(sessionParam.readCurrentSession({ useSessions: 'not-a-hook' }), undefined)
+  assert.equal(
+    sessionParam.readCurrentSession({ useSessions: () => 'sess-1' }),
+    'sess-1',
+    'selector 取到字符串即返回',
+  )
+  assert.equal(sessionParam.readCurrentSession({ useSessions: () => ({ nope: true }) }), undefined)
+  assert.equal(sessionParam.readCurrentSession({ useSessions: () => '' }), undefined)
+  assert.equal(
+    sessionParam.readCurrentSession({
+      useSessions: () => {
+        throw new Error('no session store')
+      },
+    }),
+    undefined,
+    'hook 抛错必须降级而不是冒泡',
+  )
+})
+
+check('dsh_mcp_search server=X：默认只回能力摘要（前 5 个预览），不返回全表', () => {
   const tools = []
   for (let i = 0; i < 120; i += 1) {
     tools.push({ name: `mcp__big__tool_${String(i).padStart(3, '0')}`, description: `工具 ${i}` })
@@ -158,11 +204,11 @@ check('mcp_search server=X：默认只回能力摘要（前 5 个预览），不
   assert.equal(out.preview.length, 5, '默认只预览 5 个')
   assert.equal(out.truncated, true)
   assert.ok(!('tools' in out), '默认不得回吐全表字段')
-  assert.equal(out.preview[0].name, 'tool_000', '预览用裸名（供 mcp_call 直接调用）')
+  assert.equal(out.preview[0].name, 'tool_000', '预览用裸名（供 dsh_mcp_call 直接调用）')
   assert.ok(JSON.stringify(out).length < 2000, `摘要必须远小于全表（实际 ${JSON.stringify(out).length} 字节）`)
 })
 
-check('mcp_search server=X + all:true：分页且 count=总数、hasMore/页上限正确', () => {
+check('dsh_mcp_search server=X + all:true：分页且 count=总数、hasMore/页上限正确', () => {
   const tools = []
   for (let i = 0; i < 45; i += 1) tools.push({ name: `mcp__big__t${i}`, description: '' })
   const first = index.buildServerListingResult({ server: 'big', found: true, visible: tools, all: true })
@@ -177,7 +223,7 @@ check('mcp_search server=X + all:true：分页且 count=总数、hasMore/页上�
   assert.equal(capped.limit, 100, '页大小上限 100')
 })
 
-check('mcp_search server=X：空清单 / 未找到 server 的摘要形态', () => {
+check('dsh_mcp_search server=X：空清单 / 未找到 server 的摘要形态', () => {
   const empty = index.buildServerListingResult({ server: 'ghost', found: false, visible: [], all: false })
   assert.equal(empty.count, 0)
   assert.equal(empty.truncated, false)

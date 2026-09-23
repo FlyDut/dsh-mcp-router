@@ -10,7 +10,7 @@
  * v1 → v2 迁移由 `src/domain/policy.ts` 在插件启动早期执行一次（需要 loader/preset
  * 文件解析 serverName），v1 字段类型保留在本文件仅供迁移读取；迁移写回后不再出现。
  *
- * 内存态 + 写队列合并（P1-4）：启动加载一次，高频写（mcp_call 连击的 ai 标记）
+ * 内存态 + 写队列合并（P1-4）：启动加载一次，高频写（dsh_mcp_call 连击的 ai 标记）
  * 串行合并落盘，避免每次读+写各一次文件 IO。
  */
 import { homedir } from 'node:os'
@@ -56,7 +56,7 @@ export type StateFile = {
   servers?: Record<string, ServerPolicyState>
   /** v2：工作空间 → serverName → 策略（项目级 MCP）。 */
   projects?: Record<string, Record<string, ServerPolicyState>>
-  /** AI 自动启用标记（mcp_call 保活启用）：entryId → 上次启用时间。 */
+  /** AI 自动启用标记（dsh_mcp_call 保活启用）：entryId → 上次启用时间。 */
   ai?: Record<string, { at: number }>
   /** 面板可写的插件配置（生效时机），优先于 cordis config。 */
   config?: {

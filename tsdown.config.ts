@@ -108,6 +108,22 @@ export default defineConfig([
     },
   },
   {
+    // 会话透传（前端）：把当前会话 id 拼进请求 URL。零依赖纯函数，独立产物供
+    // selftest 直载 —— 与 domain/exposure 同模式。
+    entry: ['src/client/session-param.ts'],
+    format: ['esm'],
+    outDir: 'lib',
+    target: 'node22',
+    platform: 'node',
+    external: [/^@deepseek-ai\//, /^node:/],
+    dts: false,
+    clean: false,
+    sourcemap: false,
+    outputOptions: {
+      entryFileNames: 'session-param.js',
+    },
+  },
+  {
     entry: ['src/client/index.ts'],
     // cjs：ModuleLoader factory 提供 require/module/exports，import 必须转成 require 调用
     format: ['cjs'],

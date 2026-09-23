@@ -11,9 +11,10 @@ import { AddMcpModal } from './add-mcp'
 import { describeError, readJson } from './http'
 import { EditMcpModal } from './edit-mcp'
 import { ImportMcpModal } from './import-mcp'
-import { ServerCard } from './server-card'
+import { ServerCard, TOOL_BULK_KEY } from './server-card'
+import { readCurrentSession, withSessionParam, type SessionHookProps } from './session-param'
 
-interface Props {
+interface Props extends SessionHookProps {
   /** 由 locale 插槽注入：NS 字典的翻译函数 */
   t: (key: string, params?: Record<string, string | number>) => string
   close?: () => void
@@ -161,6 +162,8 @@ function formatK(n: number): string {
 
 export function McpPanelSection(props: Props): React.ReactElement {
   const { t } = props
+  // 会话透传：宿主没注入 useSessions 时取到 undefined，请求与旧版逐字节相同。
+  const session = readCurrentSession(props)
   const [view, setView] = useState<McpView | null>(null)
   const [presets, setPresets] = useState<PresetOption[]>([])
   const [presetsError, setPresetsError] = useState<string | undefined>(undefined)
@@ -189,7 +192,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
   const load = useCallback(() => {
     const current = ++seq.current
     setError(null)
-    fetch('/api/mcp-panel/state')
+    fetch(withSessionParam('/api/mcp-panel/state', session))
       .then((res) => readJson<{ ok: boolean; state?: McpView; error?: string }>(res))
       .then((body) => {
         if (!body.ok || !body.state) throw new Error(body.error ?? 'bad response')
@@ -199,10 +202,10 @@ export function McpPanelSection(props: Props): React.ReactElement {
       .catch((err: unknown) => {
         if (current === seq.current) setError(describeError(err, t))
       })
-  }, [t])
+  }, [t, session])
 
   const loadPresets = useCallback(() => {
-    fetch('/api/mcp-panel/presets')
+    fetch(withSessionParam('/api/mcp-panel/presets', session))
       .then((res) => readJson<{ ok: boolean } & Partial<PresetListView>>(res))
       .then((body) => {
         if (!body.ok) return
@@ -213,7 +216,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
         // 预设列表不可得（服务视图受限 / 插件未重启）：降级为「仅显示已配置 id」，不影响其它功能
         setPresetsError(describeError(err, t))
       })
-  }, [t])
+  }, [t, session])
 
   useEffect(() => {
     load()
@@ -334,6 +337,48 @@ export function McpPanelSection(props: Props): React.ReactElement {
       }
     },
     [load, t],
+  )
+
+  /**
+   * 工具级批量启停（`/mcp/toolBulk`）。
+   *
+   * `toolNames === undefined` = 服务端按权威目录取「全部工具」；传数组 = 精确集合。
+   * 「按当前过滤」传的是过滤命中的显式数组 —— 命中 0 项时服务端会拒绝而不是
+   * 静默降级为「全部」（对 450 工具的 server 那是灾难性的）。
+   */
+  const toggleToolBulk = useCallback(
+    async (row: McpRow, toolNames: string[] | undefined, disabled: boolean) => {
+      const key = `${row.entryId}:${TOOL_BULK_KEY}`
+      setToolBusy((prev) => ({ ...prev, [key]: true }))
+      setError(null)
+      const token = await ensureToken()
+      const headers: Record<string, string> = { 'content-type': 'application/json' }
+      if (token) headers['x-panel-token'] = token
+      try {
+        const res = await fetch('/api/mcp-panel/mcp/toolBulk', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace, disabled, toolNames }),
+        })
+        const body = await readJson<{
+          ok: boolean
+          changed?: number
+          ignoredToolNames?: string[]
+          error?: string
+        }>(res)
+        if (!body.ok) throw new Error(body.error ?? 'tool bulk failed')
+        const ignoredCount = body.ignoredToolNames?.length ?? 0
+        const ignoredNote = ignoredCount > 0 ? t('mp.toolBulkIgnored', { n: ignoredCount }) : ''
+        showWarn(t('mp.toolBulkApplied', { n: body.changed ?? 0, ignored: ignoredNote }), false)
+        load()
+      } catch (err) {
+        setError(t('mp.toggleError', { error: describeError(err, t) }))
+        load()
+      } finally {
+        setToolBusy((prev) => ({ ...prev, [key]: false }))
+      }
+    },
+    [load, showWarn, t],
   )
 
   const switchMode = useCallback(
@@ -536,6 +581,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
               toolBusy={toolBusy}
               submit={submit}
               toggleTool={(r, tool) => void toggleTool(r, tool)}
+              toolBulk={(r, names, disabled) => void toggleToolBulk(r, names, disabled)}
               onEdit={(r) => setEditing(r)}
               onRemove={(r) => setRemoving(r)}
             />

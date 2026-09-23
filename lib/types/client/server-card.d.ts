@@ -21,9 +21,13 @@ export interface ServerCardProps {
     submit: (updates: Array<Record<string, unknown>>, key: string) => void;
     /** 工具级禁用开关（走 /mcp/toolToggle）。 */
     toggleTool: (row: McpRow, tool: McpToolInfo) => void;
+    /** 工具级批量启停（走 /mcp/toolBulk）；`toolNames === undefined` = 服务端权威目录里的「全部工具」。 */
+    toolBulk: (row: McpRow, toolNames: string[] | undefined, disabled: boolean) => void;
     /** 编辑该行的配置源（弹窗）。 */
     onEdit: (row: McpRow) => void;
     /** 删除该行（弹窗二次确认）。 */
     onRemove: (row: McpRow) => void;
 }
+/** 工具批量操作的 busy key 后缀（与单工具 key `${entryId}:${toolName}` 区分）。 */
+export declare const TOOL_BULK_KEY = "__bulk__";
 export declare function ServerCard(props: ServerCardProps): React.ReactElement;
