@@ -30,6 +30,8 @@ export type { PolicyRow } from './domain/policy';
 export { createPolicyStore } from './domain/policy';
 export { mergeSchemas, computeStatus, computeRowDisplay } from './collect';
 export { setRowFlag, rowDisabledState, removeRow, materializeTargetOf, syncPresetFiles } from './preset';
+export { maskConfigSecrets, unmaskEcho, MASKED_VALUE } from './domain/mcp-edit';
+export { readBody } from './routes';
 export { scanWorkspaceMcp } from './project-mcp';
 export { installProjectMcp, remountWorkspace, projectServerOwner, projectServerName, findProjectMcpFile } from './project-mcp';
 export { readState, writeState } from './state';

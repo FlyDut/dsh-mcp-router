@@ -26,5 +26,6 @@ export interface RoutesDeps {
     /** 手动触发一次 catalog 采集（调试端点用）。 */
     triggerSnapshot: () => Promise<void>;
 }
+export declare function readBody(req: Req): Promise<string>;
 export declare function makeRoutes(deps: RoutesDeps): Route[];
 export {};

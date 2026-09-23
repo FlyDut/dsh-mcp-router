@@ -39,6 +39,23 @@ export interface ServerConfigPatch {
 export declare function resolveWritableTarget(deps: EditDeps, ref: ServerRef): Promise<WritableTarget>;
 /** 合并补丁与原配置（未提供的字段保持原值；数组/字典整体替换）。 */
 export declare function mergeConfig(base: ServerConfigPatch, patch: ServerConfigPatch): ServerConfigPatch;
+/** 回显脱敏哨兵：env/headers 的**键名保留**，值替换为它（整表单回写时视为「保留原值」）。 */
+export declare const MASKED_VALUE = "***MASKED***";
+/**
+ * 回显脱敏（`GET /mcp/detail`、`POST /mcp/scan` 回传的 config 用）。
+ *
+ * 2026-09-23（移植上游 0b16e6f）：只读端点不该把求值后的 env/headers 真值吐出来。
+ * 面板「读回显 → 整表单回写」的编辑路径依赖 {@link unmaskEcho} 把哨兵还原，
+ * **两者必须成对上线**，否则会把哨兵当真值写进配置文件。
+ */
+export declare function maskConfigSecrets(config: ServerConfigPatch): ServerConfigPatch;
+/**
+ * 写侧：哨兵值即「保留原值」。
+ *
+ * 有 live 真值 → 恢复；live 里本就没有该键 → 丢弃（不凭空造键）。真实轮换/新增的值
+ * 原样接受，用户删掉的键也不会被恢复。
+ */
+export declare function unmaskEcho(patch: ServerConfigPatch, live: ServerConfigPatch): ServerConfigPatch;
 /** 把补丁转成 dsh-mcp-client 的 config 形状（丢掉与当前 transport 无关的字段）。 */
 export declare function toClientConfig(patch: ServerConfigPatch): Record<string, unknown>;
 export interface UpdateResult {

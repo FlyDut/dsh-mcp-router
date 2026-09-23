@@ -359,13 +359,19 @@ export function McpPanelSection(props: Props): React.ReactElement {
   )
 
   const commitPending = useCallback(async () => {
+    // 二次确认闸门（与服务端 {confirm:true} 成对）：这是 next-session 承诺的唯一出口
+    if (typeof window !== 'undefined' && !window.confirm(t('mp.commitConfirm'))) return
     showWarn(t('mp.cacheWarn'), true)
     setBusy((prev) => ({ ...prev, commit: true }))
     const token = await ensureToken()
     const headers: Record<string, string> = { 'content-type': 'application/json' }
     if (token) headers['x-panel-token'] = token
     try {
-      const res = await fetch('/api/mcp-panel/policy/commit', { method: 'POST', headers })
+      const res = await fetch('/api/mcp-panel/policy/commit', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ confirm: true }),
+      })
       const body = await readJson<{ ok: boolean; applied?: number; error?: string }>(res)
       if (!body.ok) throw new Error(body.error ?? 'commit failed')
       load()

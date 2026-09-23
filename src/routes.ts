@@ -15,6 +15,7 @@
  * - `GET  /debug`、`POST /debug/collect`  运维诊断
  */
 import { randomBytes } from 'node:crypto'
+import { StringDecoder } from 'node:string_decoder'
 import type { Context } from '@deepseek-ai/cordis'
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
@@ -32,7 +33,7 @@ import type { Registry } from './domain/registry'
 import { isExposure, normalizePresetScope, type Exposure, type PresetScope } from './domain/exposure'
 import { agentPresetId, agentWorkspace, lastSessionScope } from './domain/session-scope'
 import { describeImportedServer, knownMcpSources, parseExternalMcpConfig } from './domain/external-import'
-import { describeServer, removeServer, updateServer, type ServerConfigPatch } from './domain/mcp-edit'
+import { describeServer, removeServer, updateServer, maskConfigSecrets, type ServerConfigPatch } from './domain/mcp-edit'
 import type { PresetListView } from './shared-types'
 import { messageOf } from './util'
 
@@ -78,21 +79,40 @@ function ok(res: Res, data: object): void {
   json(res, 200, { ok: true, ...data })
 }
 
-function readBody(req: Req): Promise<string> {
+export function readBody(req: Req): Promise<string> {
   return new Promise((resolve, reject) => {
+    // 用 StringDecoder 而不是逐块 String(chunk)：多字节 UTF-8 字符被切在两个 chunk
+    // 之间时会解成乱码（中文 body 实测可复现）。decoder.end() 负责冲刷残留字节。
+    const decoder = new StringDecoder('utf8')
     let body = ''
+    let bytes = 0
+    let settled = false
     const onData = (chunk: Buffer | string) => {
-      body += String(chunk)
-      if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) {
-        req.destroy()
+      if (settled) return
+      const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk
+      bytes += buf.length
+      if (bytes > MAX_BODY_BYTES) {
+        // 超限：先解绑自有监听器（防泄漏）并排空丢弃剩余数据，但**不** destroy ——
+        // destroy 会连底层 socket 一起销毁，handle 的 400 就永远写不出去，客户端只
+        // 看到连接中断而不是可读的错误。
+        settled = true
+        cleanup()
+        req.resume()
         reject(new Error(`body exceeds ${MAX_BODY_BYTES} bytes`))
+        return
       }
+      body += decoder.write(buf)
     }
     const onEnd = () => {
+      if (settled) return
+      settled = true
+      body += decoder.end()
       cleanup()
       resolve(body)
     }
     const onError = (error: Error) => {
+      if (settled) return
+      settled = true
       cleanup()
       reject(error)
     }
@@ -435,9 +455,17 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
     {
       kind: 'exact',
       path: `${API_PREFIX}/policy/commit`,
-      handler: handle('POST', async () => {
-        // next-session 模式：「立即应用」把这批待生效意图提升为生效 —— 当轮工具集变化，
-        // 当前会话前缀缓存失效（面板已提示费用），客户端刷新后会看到 live 与 intent 一致。
+      handler: handle('POST', async (req) => {
+        // 逃生舱闸门（移植上游 b9ea506）：这是 next-session「零缓存失效」承诺的唯一出口，
+        // 服务端必须要求显式确认 —— 否则任何脚本/模型一发裸 POST 就能单方面作废该承诺
+        // （当轮工具集变化 → 下一轮前缀缓存 100% miss），且外观与用户自己点击完全相同。
+        const body = JSON.parse((await readBody(req)) || '{}') as { confirm?: unknown }
+        if (body.confirm !== true) {
+          throw new Error(
+            'commit 需要显式确认：body 传 { "confirm": true }（本操作会让当前会话下一轮 100% miss 前缀缓存，费率约为命中价的 5~12.5 倍）',
+          )
+        }
+        // 当轮工具集变化，当前会话前缀缓存失效（面板已提示费用），客户端刷新后看到 live 与 intent 一致。
         const applied = await policy.commitPending()
         await registry.refreshNow()
         invalidateMcp()
@@ -570,7 +598,9 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
         const serverName = queryParam(url, 'serverName')
         if (typeof serverName !== 'string' || serverName.length === 0) throw new Error('serverName is required')
         const workspace = queryParam(url, 'workspace')
-        return await describeServer({ ctx: hostCtx, registry, policy }, { serverName, workspace })
+        const detail = await describeServer({ ctx: hostCtx, registry, policy }, { serverName, workspace })
+        // 只读端点不回吐 env/headers 真值（写侧由 unmaskEcho 还原，两者成对，见 domain/mcp-edit）
+        return { ...detail, config: maskConfigSecrets(detail.config) }
       }),
     },
     {
@@ -675,6 +705,8 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
               summary: describeImportedServer(server),
               enabled: server.enabled,
               notes: server.notes,
+              // 刻意**不**脱敏：/mcp/scan 是需要令牌的 POST，且其唯一用途就是把扫描到的
+              // 配置原样导入（/mcp/add）；脱敏会把哨兵写成新配置的 env/headers 值。
               config: server.config,
               existing: isExisting(server.name),
             })),

@@ -40,6 +40,8 @@ export const en: Record<string, string> = {
   'mp.pendingBadge': 'Pending',
   'mp.cacheWarn':
     "Changing this mid-session invalidates the session's prompt cache: the next request is billed at miss rate (~5-12.5× hit). Prefer changing it at a session boundary.",
+  'mp.commitConfirm':
+    'Apply pending changes now?\n\nThis forces every next-session intent to take effect immediately: the very next request in this session will miss the entire prompt cache (billed at miss rate, ~5-12.5× hit). Continue?',
   'mp.warnDismiss': 'Dismiss',
   // status badges
   'mp.statusActive': 'Running',
@@ -181,6 +183,8 @@ export const zh: Record<string, string> = {
   'mp.appliedPending': '已应用 {n} 项待生效变更。',
   'mp.pendingBadge': '待生效',
   'mp.cacheWarn': '会话中途变更会使本会话 Prompt Cache 失效，下次请求按 miss 费率计费（约为 hit 的 5~12.5 倍），建议在会话边界操作。',
+  'mp.commitConfirm':
+    '现在立即应用待生效变更？\n\n这会让所有「下次会话生效」的意图当场生效：本会话下一次请求将 100% miss 整段前缀缓存（按 miss 费率计费，约为 hit 的 5~12.5 倍）。继续？',
   'mp.warnDismiss': '知道了',
   // 状态徽标
   'mp.statusActive': '运行中',

@@ -351,6 +351,122 @@ await checkAsync('removeServer：项目行删除对应 JSON 键（并保留其�
   assert.ok(readFileSync(projectFile, 'utf8').endsWith('\n'), '保持结尾换行')
 })
 
+// ── 回显脱敏与写侧哨兵还原（移植上游 0b16e6f；两者必须成对） ─────────────
+
+check('maskConfigSecrets：env/headers 键名保留、值置哨兵；其余字段原样', () => {
+  const masked = index.maskConfigSecrets({
+    serverName: 'demo',
+    transport: 'stdio',
+    command: 'node',
+    env: { API_KEY: 'sk-real-secret', DEBUG: '1' },
+    headers: { Authorization: 'Bearer real' },
+  })
+  assert.deepEqual(masked.env, { API_KEY: index.MASKED_VALUE, DEBUG: index.MASKED_VALUE })
+  assert.deepEqual(masked.headers, { Authorization: index.MASKED_VALUE })
+  assert.equal(masked.command, 'node', '非敏感字段不动')
+  assert.equal(masked.serverName, 'demo')
+  // 非字典形态的 env（异常输入）不应被改写
+  assert.equal(index.maskConfigSecrets({ env: 'oops' }).env, 'oops')
+})
+
+check('unmaskEcho：哨兵=保留原值（有 live 恢复 / 无 live 丢弃 / 新值照收 / 删除照删）', () => {
+  const live = { env: { API_KEY: 'sk-real', OLD: 'keep' }, headers: { Authorization: 'Bearer real' } }
+  const merged = index.unmaskEcho(
+    {
+      env: { API_KEY: index.MASKED_VALUE, NEW_KEY: 'fresh', GHOST: index.MASKED_VALUE },
+      headers: { Authorization: index.MASKED_VALUE },
+    },
+    live,
+  )
+  assert.deepEqual(merged.env, { API_KEY: 'sk-real', NEW_KEY: 'fresh' }, '哨兵恢复真值；live 没有的 GHOST 丢弃')
+  assert.deepEqual(merged.headers, { Authorization: 'Bearer real' }, 'headers 同样还原')
+})
+
+check('脱敏往返：回显→整表单回写 不丢真值、也不把哨兵写进配置', () => {
+  const live = { transport: 'stdio', command: 'node', env: { API_KEY: 'sk-real', DEBUG: '1' } }
+  const echoed = index.maskConfigSecrets(live)
+  // 面板把回显值原样当补丁发回
+  const written = index.unmaskEcho(echoed, live)
+  assert.deepEqual(written.env, live.env, '真值必须原样保留')
+  assert.ok(!JSON.stringify(written).includes(index.MASKED_VALUE), '写回内容不得残留哨兵')
+})
+
+// ── readBody 加固（移植上游 0b16e6f） ──────────────────────────────────
+
+async function withHttpServer(handler) {
+  const { createServer } = await import('node:http')
+  const server = createServer(handler)
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const port = server.address().port
+  return { port, close: () => new Promise((resolve) => server.close(resolve)) }
+}
+
+async function postChunks(port, chunks) {
+  const { request } = await import('node:http')
+  return await new Promise((resolve, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, method: 'POST', path: '/', headers: { 'content-length': chunks.reduce((n, c) => n + c.length, 0) } },
+      (res) => {
+        let raw = ''
+        res.setEncoding('utf8')
+        res.on('data', (c) => {
+          raw += c
+        })
+        res.on('end', () => resolve({ status: res.statusCode, raw }))
+      },
+    )
+    req.on('error', reject)
+    for (const chunk of chunks) req.write(chunk)
+    req.end()
+  })
+}
+
+await checkAsync('readBody：跨 chunk 切断的多字节 UTF-8 不乱码（StringDecoder）', async () => {
+  const srv = await withHttpServer(async (req, res) => {
+    try {
+      const body = await index.readBody(req)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ body }))
+    } catch (error) {
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: error?.message ?? String(error) }))
+    }
+  })
+  try {
+    const text = JSON.stringify({ note: '中文分块：好、测试“引号”与 emoji 🎚️ 必须完整' })
+    const payload = Buffer.from(text, 'utf8')
+    const chunks = []
+    // 每 3 字节切一刀：多字节字符必然被切断在 chunk 边界上
+    for (let i = 0; i < payload.length; i += 3) chunks.push(payload.subarray(i, i + 3))
+    const result = await postChunks(srv.port, chunks)
+    assert.equal(result.status, 200, `期望 200，实际 ${result.status}: ${result.raw}`)
+    assert.equal(JSON.parse(result.raw).body, text, '跨 chunk 中文/emoji 必须逐字节还原')
+  } finally {
+    await srv.close()
+  }
+})
+
+await checkAsync('readBody：超限返回可读错误（不 destroy socket，客户端能拿到响应）', async () => {
+  const srv = await withHttpServer(async (req, res) => {
+    try {
+      await index.readBody(req)
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: true }))
+    } catch (error) {
+      res.writeHead(400, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: error?.message ?? String(error) }))
+    }
+  })
+  try {
+    const oversized = Buffer.alloc(70 * 1024, 0x61) // 70KB > 64KB 上限
+    const result = await postChunks(srv.port, [oversized])
+    assert.equal(result.status, 400, `超限应回 400，实际 ${result.status}`)
+    assert.match(result.raw, /body exceeds/, '错误信息应说明超限')
+  } finally {
+    await srv.close()
+  }
+})
+
 rmSync(fakeHome, { recursive: true, force: true })
 if (failed) process.exit(1)
 console.log('\nselftest-mcp-edit: all checks passed')

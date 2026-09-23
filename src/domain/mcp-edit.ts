@@ -139,6 +139,60 @@ export function mergeConfig(base: ServerConfigPatch, patch: ServerConfigPatch): 
   return out as ServerConfigPatch
 }
 
+/** 回显脱敏哨兵：env/headers 的**键名保留**，值替换为它（整表单回写时视为「保留原值」）。 */
+export const MASKED_VALUE = '***MASKED***'
+
+/** 需要脱敏的字段（遮蔽值、保留键名）。 */
+const SECRET_CONFIG_KEYS = ['env', 'headers'] as const
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * 回显脱敏（`GET /mcp/detail`、`POST /mcp/scan` 回传的 config 用）。
+ *
+ * 2026-09-23（移植上游 0b16e6f）：只读端点不该把求值后的 env/headers 真值吐出来。
+ * 面板「读回显 → 整表单回写」的编辑路径依赖 {@link unmaskEcho} 把哨兵还原，
+ * **两者必须成对上线**，否则会把哨兵当真值写进配置文件。
+ */
+export function maskConfigSecrets(config: ServerConfigPatch): ServerConfigPatch {
+  const out: Record<string, unknown> = { ...config }
+  for (const key of SECRET_CONFIG_KEYS) {
+    const value = out[key]
+    if (!isPlainRecord(value)) continue
+    const masked: Record<string, string> = {}
+    for (const name of Object.keys(value)) masked[name] = MASKED_VALUE
+    out[key] = masked
+  }
+  return out as ServerConfigPatch
+}
+
+/**
+ * 写侧：哨兵值即「保留原值」。
+ *
+ * 有 live 真值 → 恢复；live 里本就没有该键 → 丢弃（不凭空造键）。真实轮换/新增的值
+ * 原样接受，用户删掉的键也不会被恢复。
+ */
+export function unmaskEcho(patch: ServerConfigPatch, live: ServerConfigPatch): ServerConfigPatch {
+  const out: Record<string, unknown> = { ...patch }
+  for (const key of SECRET_CONFIG_KEYS) {
+    const incoming = out[key]
+    if (!isPlainRecord(incoming)) continue
+    const liveMap = isPlainRecord(live[key]) ? (live[key] as Record<string, unknown>) : undefined
+    const merged: Record<string, unknown> = {}
+    for (const [name, value] of Object.entries(incoming)) {
+      if (value === MASKED_VALUE) {
+        if (liveMap && Object.prototype.hasOwnProperty.call(liveMap, name)) merged[name] = liveMap[name]
+        continue
+      }
+      merged[name] = value
+    }
+    out[key] = merged
+  }
+  return out as ServerConfigPatch
+}
+
 /** 把补丁转成 dsh-mcp-client 的 config 形状（丢掉与当前 transport 无关的字段）。 */
 export function toClientConfig(patch: ServerConfigPatch): Record<string, unknown> {
   const transport = patch.transport ?? (patch.url !== undefined && patch.command === undefined ? 'streamable-http' : 'stdio')
@@ -251,9 +305,9 @@ export async function updateServer(deps: EditDeps, input: { serverName: string; 
     }
   }
 
-  // ② 合并编辑补丁（基线必须完整，否则会丢字段）
+  // ② 合并编辑补丁（基线必须完整，否则会丢字段）；哨兵值还原成 live 真值（脱敏回显闭环）
   const base = target.kind === 'patch' ? patchBaseFromLoader(deps, ref) : projectBaseFrom(projectParsed as Record<string, unknown>, target.key, target.file)
-  const runtimeConfig = toClientConfig(mergeConfig(base, input.patch))
+  const runtimeConfig = toClientConfig(mergeConfig(base, unmaskEcho(input.patch, base)))
 
   if (target.kind === 'patch') {
     const text = patchText as string

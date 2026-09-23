@@ -56,6 +56,10 @@ export { createPolicyStore } from './domain/policy'
 export { mergeSchemas, computeStatus, computeRowDisplay } from './collect'
 // 预设文件文本操作（selftest 回归护栏 + 潜在外部复用）
 export { setRowFlag, rowDisabledState, removeRow, materializeTargetOf, syncPresetFiles } from './preset'
+// 配置回显脱敏 / 写侧哨兵还原（selftest 回归护栏：两者必须成对，否则哨兵会写进配置）
+export { maskConfigSecrets, unmaskEcho, MASKED_VALUE } from './domain/mcp-edit'
+// HTTP 读体加固（selftest 回归护栏：跨 chunk 多字节乱码 + 超限 destroy socket）
+export { readBody } from './routes'
 // 项目 MCP 扫描（selftest 回归护栏：根目录先读、子目录覆盖的去重规则）
 export { scanWorkspaceMcp } from './project-mcp'
 // 项目 MCP 运行时装配（外部复用/端到端验证：手动安装、按工作空间重扫、owner 查询）
