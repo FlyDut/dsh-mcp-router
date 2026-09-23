@@ -212,6 +212,8 @@ This release does not merge the upstream branch (upstream 0.6.0 still carries th
 - **Tooling**: `pnpm setup` now works on POSIX (it used to shell out to Windows `mklink /J` only); the 6 self-tests are wired as `pnpm selftest` and into `prepublishOnly`
 - **Drive-by fix**: bare tool-name rendering (`^mcp__[^_]+__` left a prefix behind for server names containing underscores)
 
+> **Upstream provenance**: this release is based on `upstream/main@3c06025` (0.6.0 release). The commit-by-commit map, the list of upstream changes that were evaluated and **deliberately not ported**, and the per-branch **watermarks** live in [docs/upstream-port.md](docs/upstream-port.md). To update: `git fetch upstream --no-tags && pnpm upstream:check` (it lists new upstream commits and branches relative to the watermarks).
+
 ### v0.6.1 — edit / delete / import from other agents
 
 - **Edit**: change serverName, transport, command, args, env, cwd, URL, headers and tool timeout in the panel; the config source is rewritten and the runtime synced. Renaming migrates the level, preset scope and per-tool disables (including the `mcp__old__` → `mcp__new__` prefix rewrite)

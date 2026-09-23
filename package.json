@@ -38,6 +38,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "build": "node scripts/build.mjs",
     "verify": "node scripts/verify.mjs",
+    "upstream:check": "node scripts/upstream-check.mjs",
     "selftest:exposure": "node scripts/selftest-exposure.mjs",
     "selftest:composition": "node scripts/selftest-composition-file.mjs",
     "selftest:import": "node scripts/selftest-external-import.mjs",

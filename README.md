@@ -263,6 +263,8 @@ pnpm selftest       # 一次跑全部 6 个自测（也可单独 pnpm selftest:m
 - **工具链**：`pnpm setup` 支持 POSIX（此前只走 Windows `mklink /J`）；6 个自测挂成 `pnpm selftest` 并纳入 `prepublishOnly`
 - **顺带修复**：工具裸名渲染（`^mcp__[^_]+__` 对含下划线的 serverName 会残留前缀）
 
+> **上游溯源**：本批基于 `upstream/main@3c06025`（0.6.0 release），逐条「上游提交 → 本地提交」映射、已评估但**不适用**的清单、以及每条上游分支的**水位线**都记在 [docs/upstream-port.md](docs/upstream-port.md)。下次更新：`git fetch upstream --no-tags && pnpm upstream:check`（会按水位线列出上游新增的提交与分支）。
+
 ### v0.6.1 — 编辑 / 删除 / 从其它 Agent 导入
 
 - **编辑**：面板直接改 serverName、传输方式、命令、参数、环境变量、工作目录、URL、请求头、工具调用超时；写回配置源文件并同步运行时。改名会自动迁移档位、预设关联与工具级禁用（含 `mcp__old__` → `mcp__new__` 前缀重写）
