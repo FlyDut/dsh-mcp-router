@@ -1,8 +1,7 @@
 /**
  * 双语字典：zh/en 真双语（不互为别名），语言跟随 DSH 界面设置。
  *
- * 术语约定（四档）：
- * - native     全部：工具清单直接进上下文（DSH 原生方式）
+ * 术语约定（三档，均不注入工具 schema）：
  * - name-only  仅名称：只暴露服务器名，工具经 dsh_mcp_call 按需调用
  * - hidden     隐藏：完全不进上下文，可 dsh_mcp_search 检索、dsh_mcp_call 按需调用
  * - off        关闭：不可见、不可搜索、不可调用
@@ -20,7 +19,6 @@ export const en: Record<string, string> = {
   'mp.toggleError': 'Failed: {error}',
   // stats
   'mp.statServers': 'servers',
-  'mp.statNative': 'injected',
   'mp.statNameOnly': 'name only',
   'mp.statHidden': 'hidden/off',
   'mp.statTools': '{n} tools',
@@ -28,7 +26,7 @@ export const en: Record<string, string> = {
   // middle layer + apply timing
   'mp.middleLayerTitle': 'AI middle layer',
   'mp.middleLayerDesc':
-    'dsh_mcp_search and dsh_mcp_call are always registered. Servers not set to "Native" stay out of the tool list and are used on demand: dsh_mcp_call enables a hidden server, calls it, then reaps it after an idle window. This never changes your per-turn tool list, so it never invalidates the prompt cache.',
+    'dsh_mcp_search and dsh_mcp_call are always registered. No MCP tool schema is ever injected into the tool list — every server is reached on demand: dsh_mcp_call enables a hidden server, calls it, then reaps it after an idle window. This never changes your per-turn tool list, so it never invalidates the prompt cache.',
   'mp.applyTiming': 'Apply timing',
   'mp.applyImmediate': 'Immediate',
   'mp.applyNextSession': 'Next session',
@@ -53,8 +51,6 @@ export const en: Record<string, string> = {
     'The process is running but no tool has been registered for it — the tool count is shown as 0 (not backfilled from the directory snapshot). Check the server log, or restart it.',
   // exposure (four levels)
   'mp.exposureTitle': 'Exposure',
-  'mp.exposureNative': 'Native',
-  'mp.exposureNativeHint': 'Every tool schema is injected into the context (classic DSH behaviour); the process runs.',
   'mp.exposureNameOnly': 'Name only',
   'mp.exposureNameOnlyHint':
     'Only the server name is injected (a one-line index). The process runs; call tools on demand via dsh_mcp_call, which returns the tool list when the tool name is omitted.',
@@ -176,7 +172,6 @@ export const zh: Record<string, string> = {
   'mp.toggleError': '全部：{error}',
   // 统计
   'mp.statServers': '个服务器',
-  'mp.statNative': '个原生注入',
   'mp.statNameOnly': '个仅名称',
   'mp.statHidden': '个隐藏/关闭',
   'mp.statTools': '{n} 个工具',
@@ -184,7 +179,7 @@ export const zh: Record<string, string> = {
   // 中间层 + 生效时机全部
   'mp.middleLayerTitle': 'AI 中间层',
   'mp.middleLayerDesc':
-    'dsh_mcp_search 与 dsh_mcp_call 常驻。未设为「原生注入」的服务器不进工具清单，需要时按需调用：dsh_mcp_call 会临时启用被隐藏的服务器、调用、再按空闲窗口回收。这条路径不改变模型可见的工具集，因此不会造成前缀缓存失效。',
+    'dsh_mcp_search 与 dsh_mcp_call 常驻。任何档位都不把 MCP 工具 schema 注入工具清单，全部按需调用：dsh_mcp_call 会临时启用被隐藏的服务器、调用、再按空闲窗口回收。这条路径不改变模型可见的工具集，因此不会造成前缀缓存失效。',
   'mp.applyTiming': '生效时机',
   'mp.applyImmediate': '立即生效',
   'mp.applyNextSession': '下次会话生效',
@@ -206,10 +201,8 @@ export const zh: Record<string, string> = {
   'mp.unregisteredBadge': '未注册',
   'mp.unregisteredHint':
     '进程在跑，但一个工具都没注册上——工具全部 显示（不再用目录快照回填）。请查看该 server 日志或重启它。',
-  // 四档
+  // 三档
   'mp.exposureTitle': '曝光档位',
-  'mp.exposureNative': '原生注入',
-  'mp.exposureNativeHint': '全部工具 schema 直接注入上下文（DSH 原生方式）；进程保持运行。',
   'mp.exposureNameOnly': '仅名称',
   'mp.exposureNameOnlyHint':
     '上下文只注入服务器名（一行索引）；进程保持运行，工具经 dsh_mcp_call 按需调用（不传工具名即返回该服务器的工具清单）。',

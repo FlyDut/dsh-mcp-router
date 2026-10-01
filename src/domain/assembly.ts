@@ -9,17 +9,17 @@
  *            （项目级 MCP 额外要求会话工作空间匹配）
  * ```
  *
- * - `native`    → 该 server 的 `mcp__<s>__*` 工具全部保留（DSH 全部）
- * - `name-only` → 工具全部过滤，但 server 名与摘要进入「服务器索引段」
+ * - `name-only` → 工具全部过滤，server 名与摘要进入「服务器索引段」
  * - `hidden`    → 工具过滤，索引段不出现（仅 dsh_mcp_search 可检索、dsh_mcp_call 可调用）
  * - `off`       → 工具过滤，索引段不出现，dsh_mcp_call 拒绝
  *
- * 工具级禁用（`policy.disabledTools`）在 native 档下同样生效。
+ * 本插件不注入任何 MCP 工具 schema：`mcp__*` 工具对**已知 server 一律过滤**，模型一律经
+ * dsh_mcp_search / dsh_mcp_call 按需调用（工具级禁用由调用路径强制，见 mcpcall）。
  * 未知 server（快照尚未覆盖）与畸形工具名保守保留，绝不误伤。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
-import { type Exposure, type ServerPolicy, decideExposure, injectsTools, injectionOf, policyDisablesTool } from './exposure'
+import { type Exposure, decideExposure } from './exposure'
 import type { PolicyStore } from './policy'
 import type { Registry, ServerRef } from './registry'
 import { agentPresetId, agentWorkspace, sameWorkspace } from './session-scope'
@@ -38,8 +38,6 @@ export interface AssemblyPlan {
   workspace: string | undefined
   /** serverName → 有效曝光。 */
   byServer: Map<string, Exposure>
-  /** serverName → 生效策略（工具级禁用判定用）。 */
-  policies: Map<string, ServerPolicy>
   /** 判定为 name-only 的 server（索引段渲染顺序按名字排序）。 */
   nameOnly: string[]
   /** 判定为 hidden 的 server 数量（索引段提示"另有 N 个可检索"）。 */
@@ -84,20 +82,17 @@ export function buildAssemblyPlan(deps: AssemblyDeps, context: { agent?: unknown
   const presetId = agentPresetId(deps.ctxForPreset, context?.agent)
   const workspace = agentWorkspace(context?.agent)
   const byServer = new Map<string, Exposure>()
-  const policies = new Map<string, ServerPolicy>()
   const nameOnly: string[] = []
   let hiddenCount = 0
 
   for (const ref of deps.registry.snapshot().all.values()) {
     const effective = exposureForRef(deps, ref, presetId, workspace)
     byServer.set(ref.serverName, effective)
-    policies.set(ref.serverName, deps.policy.effective(ref.serverName, ref.workspace))
-    const injection = injectionOf(effective)
-    if (injection === 'name') nameOnly.push(ref.serverName)
+    if (effective === 'name-only') nameOnly.push(ref.serverName)
     else if (effective === 'hidden') hiddenCount += 1
   }
   nameOnly.sort((a, b) => a.localeCompare(b))
-  return { presetId, workspace, byServer, policies, nameOnly, hiddenCount }
+  return { presetId, workspace, byServer, nameOnly, hiddenCount }
 }
 
 /** 渲染 name-only 的服务器索引段（无内容时返回空串，不贡献 token）。 */
@@ -163,11 +158,10 @@ export function installAssembly(ctx: Context, depsRaw: Omit<AssemblyDeps, 'ctxFo
             const server = serverOfMcp(name)
             // 畸形工具名保守保留
             if (server === null) return true
-            const effective = plan.byServer.get(server)
             // 未知 server（快照未覆盖）保守保留
-            if (effective === undefined) return true
-            if (!injectsTools(effective)) return false
-            return !policyDisablesTool(plan.policies.get(server), name)
+            if (plan.byServer.get(server) === undefined) return true
+            // 已知 server：一律不注入工具 schema，改由 dsh_mcp_call 按需调用
+            return false
           })
           return next()
         },

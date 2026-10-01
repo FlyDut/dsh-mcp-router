@@ -33,7 +33,7 @@ export interface McpRow {
     /** token 估算（停用态用 catalog 快照回填）。 */
     tokens: number;
     status: McpStatus;
-    /** 用户意图档位（四档之一）。 */
+    /** 用户意图档位（三档之一）。 */
     exposure: Exposure;
     /** 当前对该面板会话生效的档位（含预设隔离与运行态降级）。 */
     effectiveExposure: Exposure;
@@ -41,10 +41,6 @@ export interface McpRow {
     presetScope: PresetScope;
     /** 当前会话的 preset 是否被允许（false = 运行时隔离命中）。 */
     presetAllowed: boolean;
-    /** 模型是否直接看到工具（effective === native）。 */
-    modelVisible: boolean;
-    /** 是否只暴露服务器名（effective === name-only）。 */
-    nameOnly: boolean;
     /** 是否存在待生效变更（next-session 模式）。 */
     pending?: boolean;
     /** 是否已被用户显式配置过（false = 使用默认档位）。 */
@@ -67,8 +63,6 @@ export interface McpView {
     mcpTotal: number;
     /** 档位为 off 的服务器数。 */
     mcpDisabled: number;
-    /** 当前生效为 native 的服务器数。 */
-    mcpNative: number;
     /** 当前生效为 name-only 的服务器数。 */
     mcpNameOnly: number;
     /** 当前生效为 hidden 的服务器数。 */

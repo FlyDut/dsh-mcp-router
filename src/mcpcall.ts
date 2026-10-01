@@ -742,10 +742,10 @@ function registerMcpSearchTool(ctx: Context, control: McpControlCtx): () => void
         return toJson({ ok: true, kind: 'search', query, count: hits.length, limit, hits })
       }
 
-      // 无参摘要：列出 native（工具已注入）与 name-only（名称已暴露）的服务器；
+      // 无参摘要：列出 name-only（名称已暴露）的服务器；
       // hidden 只给计数提示（名字不外泄），off / 预设隔离完全不出现在结果里
       const rows = buildSummary(control)
-      const listed: Array<{ server: string; summary: string; injected: boolean }> = []
+      const listed: Array<{ server: string; summary: string }> = []
       let hiddenCount = 0
       for (const row of rows) {
         const effective = access(row.server).effective
@@ -753,11 +753,9 @@ function registerMcpSearchTool(ctx: Context, control: McpControlCtx): () => void
           if (effective === 'hidden') hiddenCount += 1
           continue
         }
-        listed.push({ server: row.server, summary: row.summary, injected: effective === 'native' })
+        listed.push({ server: row.server, summary: row.summary })
       }
-      const text = listed
-        .map((row) => `- ${row.server}: ${row.summary}${row.injected ? '（工具已直接注入上下文）' : ''}`)
-        .join('\n')
+      const text = listed.map((row) => `- ${row.server}: ${row.summary}`).join('\n')
       return toJson({
         ok: true,
         kind: 'summary',

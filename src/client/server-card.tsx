@@ -169,14 +169,14 @@ const C = {
   busy: { opacity: 0.55, cursor: 'progress' } as React.CSSProperties,
 }
 
-/** 四档在 UI 上的顺序与 i18n 后缀。 */
-const EXPOSURE_ORDER: Exposure[] = ['native', 'name-only', 'hidden', 'off']
+/** 三档在 UI 上的顺序与 i18n 后缀。 */
+const EXPOSURE_ORDER: Exposure[] = ['name-only', 'hidden', 'off']
 
 /** 工具批量操作的 busy key 后缀（与单工具 key `${entryId}:${toolName}` 区分）。 */
 export const TOOL_BULK_KEY = '__bulk__'
 
 function exposureKey(exposure: Exposure, kind: 'label' | 'hint'): string {
-  const suffix = exposure === 'name-only' ? 'NameOnly' : exposure === 'native' ? 'Native' : exposure === 'hidden' ? 'Hidden' : 'Off'
+  const suffix = exposure === 'name-only' ? 'NameOnly' : exposure === 'hidden' ? 'Hidden' : 'Off'
   return `mp.exposure${suffix}${kind === 'label' ? '' : 'Hint'}`
 }
 

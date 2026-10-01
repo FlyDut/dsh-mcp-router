@@ -16,7 +16,6 @@ import type { CatalogRuntime } from './runtime-types'
 import type { PolicyStore } from './domain/policy'
 import type { Registry } from './domain/registry'
 import { agentPresetId, agentWorkspace, lastSessionScope } from './domain/session-scope'
-import { injectionOf } from './domain/exposure'
 import { messageOf } from './util'
 import { getActiveWorkspace } from './project-mcp'
 
@@ -362,8 +361,6 @@ async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<Mc
         effectiveExposure: effective,
         presetScope: effectivePolicy.presets,
         presetAllowed: access ? access.blockedBy !== 'preset' : true,
-        modelVisible: injectionOf(effective) === 'tools',
-        nameOnly: injectionOf(effective) === 'name',
         pending: policy.isPending(serverName, ref.workspace),
         configured: intent !== undefined,
         source: ref.source,
@@ -382,7 +379,6 @@ async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<Mc
     mcp,
     mcpTotal: mcp.length,
     mcpDisabled: mcp.filter((row) => row.exposure === 'off').length,
-    mcpNative: mcp.filter((row) => row.effectiveExposure === 'native').length,
     mcpNameOnly: mcp.filter((row) => row.effectiveExposure === 'name-only').length,
     mcpHidden: mcp.filter((row) => row.effectiveExposure === 'hidden').length,
     mcpToolsTotal,

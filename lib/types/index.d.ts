@@ -51,7 +51,7 @@ export interface Config {
     searchLimitMax?: number;
     /** 能力摘要表（name-only 索引段与 dsh_mcp_search 摘要用）。 */
     serverSummary?: Record<string, string>;
-    /** 未配置过的 MCP 服务器使用的默认档位。默认 native（DSH 原生行为）。 */
+    /** 未配置过的 MCP 服务器使用的默认档位。默认 name-only（进程运行、按需调用）。 */
     defaultExposure?: Exposure;
     /** 是否注册中间层工具（dsh_mcp_search / dsh_mcp_call）。默认 true。 */
     middleLayer?: boolean;

@@ -132,7 +132,7 @@ export function makePolicyState(
   patch: Partial<{ exposure: Exposure; presets: PresetScope; disabledTools: string[]; applied?: boolean }> = {},
 ): ServerPolicyState {
   const out: ServerPolicyState = {
-    exposure: patch.exposure ?? 'native',
+    exposure: patch.exposure ?? 'name-only',
     presets: patch.presets ?? { mode: 'all', ids: [] },
     disabledTools: patch.disabledTools ?? [],
   }

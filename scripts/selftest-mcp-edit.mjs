@@ -168,7 +168,7 @@ const refs = new Map([
   ['fs', presetRef],
 ])
 const registry = makeRegistry(refs)
-const policy = index.createPolicyStore({ ctx: makeCtx(), fallbackExposure: 'native' })
+const policy = index.createPolicyStore({ ctx: makeCtx(), fallbackExposure: 'name-only' })
 await policy.load()
 await policy.set({ serverName: 'alpha', patch: { exposure: 'hidden', presets: { mode: 'only', ids: ['coding'] } }, applyMode: 'immediate' })
 
@@ -307,7 +307,7 @@ await checkAsync('removeServer：删除 patch 块 + 卸载 loader 行 + 清理�
   assert.equal(result.file, patchFile)
   assert.equal(result.unloaded, true)
   assert.deepEqual(removed, ['mcp-alpha'])
-  assert.equal(policy.effective('alpha2', undefined).exposure, 'native', '策略应被清理回默认')
+  assert.equal(policy.effective('alpha2', undefined).exposure, 'name-only', '策略应被清理回默认')
 
   const text = readFileSync(patchFile, 'utf8')
   assert.ok(!text.includes('mcp-alpha'))

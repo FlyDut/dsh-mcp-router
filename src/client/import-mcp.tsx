@@ -60,9 +60,9 @@ interface ScanSource {
 }
 
 type Target = 'global' | 'project'
-type Exposure = 'native' | 'name-only' | 'hidden' | 'off'
+type Exposure = 'name-only' | 'hidden' | 'off'
 
-const EXPOSURES: Exposure[] = ['native', 'name-only', 'hidden', 'off']
+const EXPOSURES: Exposure[] = ['name-only', 'hidden', 'off']
 
 /** 样式薄别名层：共享件来自 ui.ts；group/item/badge 系列为本弹窗特有。 */
 const C = {
@@ -109,7 +109,7 @@ export function ImportMcpModal(props: Props): React.ReactElement {
   const [selected, setSelected] = useState<Record<string, ScannedServer>>({})
   const [customPath, setCustomPath] = useState('')
   const [target, setTarget] = useState<Target>('global')
-  const [exposure, setExposure] = useState<Exposure>((defaultExposure as Exposure) ?? 'native')
+  const [exposure, setExposure] = useState<Exposure>((defaultExposure as Exposure) ?? 'name-only')
   const [scanning, setScanning] = useState(false)
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -174,8 +174,8 @@ export function ImportMcpModal(props: Props): React.ReactElement {
       }>(res)
       if (!body.ok) throw new Error(body.error ?? 'import failed')
       const names = body.names ?? chosen.map((server) => server.name)
-      // 导入后统一设档位（全部以外的档位才有必要写策略）
-      if (exposure !== 'native' && names.length > 0) {
+      // 导入后统一设档位（默认档位 name-only 无需重复写策略）
+      if (exposure !== 'name-only' && names.length > 0) {
         await fetch('/api/dsh-mcp-router/policy', {
           method: 'POST',
           headers: await authHeaders(),
@@ -285,7 +285,7 @@ export function ImportMcpModal(props: Props): React.ReactElement {
           <span style={C.label}>{t('mp.importExposure')}</span>
           {EXPOSURES.map((value) => (
             <button key={value} type="button" style={C.tab(exposure === value)} onClick={() => setExposure(value)}>
-              {t(`mp.exposure${value === 'name-only' ? 'NameOnly' : value === 'native' ? 'Native' : value === 'hidden' ? 'Hidden' : 'Off'}`)}
+              {t(`mp.exposure${value === 'name-only' ? 'NameOnly' : value === 'hidden' ? 'Hidden' : 'Off'}`)}
             </button>
           ))}
         </div>

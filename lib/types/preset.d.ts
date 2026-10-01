@@ -47,7 +47,7 @@ export interface SyncPresetDeps {
  *
  * 三条规则：
  * 1. **首次采用**：策略表里没有、但组合文件里有该行的 server，按文件现状采用
- *    （文件 disabled → `hidden`，否则 `native`），绝不反过来覆盖用户手工配置。
+ *    （文件 disabled → `hidden`，否则 `name-only`），绝不反过来覆盖用户手工配置。
  * 2. **尊重外部修改**：文件当前状态与上次物化账本不一致 = 用户手工改过 → 只对齐
  *    账本，不覆盖文件。
  * 3. **物化**：期望 disabled ≠ 文件现状时写文件，并更新账本。

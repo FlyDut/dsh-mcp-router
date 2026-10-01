@@ -5,16 +5,18 @@
  * 档位判定、预设隔离判定、v1→v2 策略迁移都收敛在这里，且**不依赖 Cordis 运行时**
  * （零 import），因此可被 scripts/selftest-exposure.mjs 直接以构建产物覆盖。
  *
- * ── 四档语义（每 server 一个档位，同时决定进程期望状态）──────────────────
+ * ── 三档语义（每 server 一个档位，同时决定进程期望状态）──────────────────
  *
  * | exposure    | 进程            | 上下文注入              | dsh_mcp_search            | dsh_mcp_call |
  * |-------------|-----------------|-------------------------|-----------------------|----------|
- * | `native`    | 运行            | 全部 mcp__<s>__* schema | 摘要表列出（已注入）   | 可调用   |
  * | `name-only` | 运行            | 无工具，仅 server 名索引 | 摘要表列出            | 可调用   |
  * | `hidden`    | 停用（按需保活） | 无                      | 仅关键词命中返回       | 可调用   |
  * | `off`       | 停用            | 无                      | 完全不出现            | 拒绝     |
  *
- * `native` / `name-only` 期望进程运行；`hidden` / `off` 期望进程停用（由
+ * 插件定位是「纯按需调用路由」：任何档位都不把 `mcp__<s>__*` 工具 schema 注入
+ * 上下文，模型一律经 `dsh_mcp_search` 发现、`dsh_mcp_call` 调用。
+ *
+ * `name-only` 期望进程运行；`hidden` / `off` 期望进程停用（由
  * {@link desiredRunning} 派生，用户切档位即隐式启停）。`hidden` 的 server 仍可被
  * 模型经 `dsh_mcp_call` 保活启用（临时运行 → 调用 → 空闲回收），这正是「完全被中间层
  * 托管」的语义；`off` 连这条路径也关掉。
@@ -26,7 +28,7 @@
  * `except` 视为可用，`only` 视为不可用。
  */
 /** 曝光档位。 */
-export type Exposure = 'native' | 'name-only' | 'hidden' | 'off';
+export type Exposure = 'name-only' | 'hidden' | 'off';
 /** 预设关联模式。 */
 export type PresetMode = 'all' | 'only' | 'except';
 /** 预设关联：模式 + 预设 id 列表（`all` 时列表为空）。 */
@@ -49,7 +51,7 @@ export declare const PRESET_MODES: readonly PresetMode[];
 export declare function isExposure(value: unknown): value is Exposure;
 /** 预设模式是否为合法值。 */
 export declare function isPresetMode(value: unknown): value is PresetMode;
-/** 构造默认策略（未配置过的 server 默认全部 = DSH 原本行为）。 */
+/** 构造默认策略（未配置过的 server 默认仅名称索引、按需调用）。 */
 export declare function defaultPolicy(exposure?: Exposure): ServerPolicy;
 /** 宽容解析预设关联（非法输入回落 `all`）。 */
 export declare function normalizePresetScope(raw: unknown): PresetScope;
@@ -81,7 +83,7 @@ export interface ExposureInput {
  * 判定顺序（先隔离、再档位、最后运行态降级）：
  * 1. 预设不允许 → `off`（运行时隔离，物理状态不变）；
  * 2. `off` / `hidden` 档 → 原样返回；
- * 3. `native` / `name-only` 档：进程在跑且非 AI 保活窗口 → 原档；否则降级为
+ * 3. `name-only` 档：进程在跑且非 AI 保活窗口 → 原档；否则降级为
  *    `hidden`（进程未跑或正被中间层托管：工具不注入，但仍可经 dsh_mcp_call 调用，
  *    不静默丢失能力）。
  */
@@ -94,17 +96,15 @@ export type BlockedReason = 'preset' | 'exposure' | 'workspace';
  * @param workspaceMismatch - 项目级 MCP 的所属工作空间与会话工作空间不一致（硬作用域）。
  */
 export declare function offReason(policy: ServerPolicy, presetId: string | null | undefined, workspaceMismatch?: boolean): BlockedReason;
-/** 有效曝光对模型的意义：注入工具 / 仅暴露名称 / 完全不暴露。 */
-export type Injection = 'tools' | 'name' | 'none';
+/** 有效曝光对模型的意义：仅暴露名称 / 完全不暴露（本插件不做工具 schema 注入）。 */
+export type Injection = 'name' | 'none';
 /** 由有效曝光映射到注入形态。 */
 export declare function injectionOf(effective: Exposure): Injection;
-/** 该有效曝光下该 server 的工具是否进入模型目录。 */
-export declare function injectsTools(effective: Exposure): boolean;
 /** 该有效曝光下模型是否可经 dsh_mcp_call 调用该 server（`off` 拒绝）。 */
 export declare function callableUnder(effective: Exposure): boolean;
 /** 该有效曝光下该 server 是否出现在 dsh_mcp_search 的无参摘要表。 */
 export declare function listedInSummary(effective: Exposure): boolean;
-/** 工具注册全名是否被策略禁用（工具级禁用，native 档下同样生效）。 */
+/** 工具注册全名是否被策略禁用（工具级禁用）。 */
 export declare function policyDisablesTool(policy: ServerPolicy | undefined, fullName: string): boolean;
 /**
  * 工具级**批量**启停的目标解析（三态契约，纯函数；移植上游 PR#17 特性 1 的 BLOCK-1 修法）。
@@ -148,7 +148,7 @@ export interface MigrationResult {
  * 映射规则：
  * - `mcp[file][rowId].desired === true`（用户停用）→ `hidden`（旧 autoManage 开启，
  *   停用的 MCP 由中间层按需调用）或 `off`（旧 autoManage 关闭，停用即完全不可用）；
- *   `desired === false`（用户启用）→ `native`。
+ *   `desired === false`（用户启用）→ `name-only`。
  * - `projectMcp[workspace][serverName]` 同理（boolean 值即 desired disabled）。
  * - `toolDisabled[serverName]` / `projectToolDisabled[workspace][serverName]` →
  *   对应策略的 `disabledTools`。

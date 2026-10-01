@@ -102,7 +102,7 @@ export interface PolicyStore {
 
 export function createPolicyStore(options: PolicyStoreOptions): PolicyStore {
   const { ctx } = options
-  const fallbackExposure: Exposure = options.fallbackExposure ?? 'native'
+  const fallbackExposure: Exposure = options.fallbackExposure ?? 'name-only'
   const intent = new Map<string, ServerPolicyState>()
   const effective = new Map<string, ServerPolicyState>()
   const pending = new Set<string>()
@@ -389,7 +389,7 @@ export function createPolicyStore(options: PolicyStoreOptions): PolicyStore {
     async adoptFromFile(serverName, workspace, fileDisabled) {
       const key = keyOf(serverName, workspace)
       if (intent.has(key)) return undefined
-      const exposure: Exposure = fileDisabled === true ? 'hidden' : 'native'
+      const exposure: Exposure = fileDisabled === true ? 'hidden' : 'name-only'
       const entry: ServerPolicyState = { ...defaultPolicy(exposure) }
       if (fileDisabled !== null) entry.applied = fileDisabled
       intent.set(key, entry)

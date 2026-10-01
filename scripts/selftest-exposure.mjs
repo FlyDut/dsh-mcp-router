@@ -1,5 +1,5 @@
 // 领域纯逻辑自测：曝光档位（exposure）/ 预设关联隔离（presetAllows）/ v1→v2 策略迁移。
-// 走独立构建产物 lib/exposure.js（无框架依赖），是「四档 × 预设隔离」语义的回归护栏。
+// 走独立构建产物 lib/exposure.js（无框架依赖），是「三档 × 预设隔离」语义的回归护栏。
 // 用法：node scripts/selftest-exposure.mjs （在包根目录运行，需先 pnpm build）
 import assert from 'node:assert/strict'
 import { join, dirname } from 'node:path'
@@ -22,9 +22,9 @@ const check = (label, fn) => {
 
 /* ── 档位与预设模式的合法性 ───────────────────────────────────────────── */
 
-check('isExposure：四档合法，其余非法', () => {
-  for (const value of ['native', 'name-only', 'hidden', 'off']) assert.ok(x.isExposure(value), value)
-  for (const value of ['', 'NATIVE', 'auto', null, undefined, 3, {}]) assert.ok(!x.isExposure(value), String(value))
+check('isExposure：三档合法，其余非法（含已移除的 native）', () => {
+  for (const value of ['name-only', 'hidden', 'off']) assert.ok(x.isExposure(value), value)
+  for (const value of ['', 'NATIVE', 'native', 'auto', null, undefined, 3, {}]) assert.ok(!x.isExposure(value), String(value))
 })
 
 check('isPresetMode：三模式合法，其余非法', () => {
@@ -34,15 +34,16 @@ check('isPresetMode：三模式合法，其余非法', () => {
 
 /* ── 策略规范化（宽容解析，绝不因坏数据抛错）─────────────────────────── */
 
-check('defaultPolicy：默认全部 + 全部预设 + 无禁用工具', () => {
-  assert.deepEqual(x.defaultPolicy(), { exposure: 'native', presets: { mode: 'all', ids: [] }, disabledTools: [] })
+check('defaultPolicy：默认仅名称 + 全部预设 + 无禁用工具', () => {
+  assert.deepEqual(x.defaultPolicy(), { exposure: 'name-only', presets: { mode: 'all', ids: [] }, disabledTools: [] })
   assert.equal(x.defaultPolicy('hidden').exposure, 'hidden')
 })
 
 check('normalizePolicy：非法输入回落默认；fallbackExposure 生效', () => {
   assert.deepEqual(x.normalizePolicy(undefined), x.defaultPolicy())
   assert.deepEqual(x.normalizePolicy(null, 'hidden'), x.defaultPolicy('hidden'))
-  assert.equal(x.normalizePolicy({ exposure: 'bogus' }).exposure, 'native')
+  assert.equal(x.normalizePolicy({ exposure: 'bogus' }).exposure, 'name-only')
+  assert.equal(x.normalizePolicy({ exposure: 'native' }).exposure, 'name-only', '已移除的 native 回落到默认档')
   assert.equal(x.normalizePolicy({ exposure: 'bogus' }, 'off').exposure, 'off')
 })
 
@@ -93,8 +94,7 @@ check('presetAllows：only 空名单 = 对所有会话不可用；except 空名�
 
 /* ── 档位 → 进程期望状态 ─────────────────────────────────────────────── */
 
-check('desiredRunning：native/name-only 运行，hidden/off 停用', () => {
-  assert.equal(x.desiredRunning('native'), true)
+check('desiredRunning：仅 name-only 运行，hidden/off 停用', () => {
   assert.equal(x.desiredRunning('name-only'), true)
   assert.equal(x.desiredRunning('hidden'), false)
   assert.equal(x.desiredRunning('off'), false)
@@ -105,13 +105,9 @@ check('desiredRunning：native/name-only 运行，hidden/off 停用', () => {
 const decide = (exposure, running, aiActive, presetId, scope = { mode: 'all' }) =>
   x.decideExposure({ policy: x.normalizePolicy({ exposure, presets: scope }), running, aiActive, presetId })
 
-check('decideExposure：native 运行中 → native（全部）', () => {
-  assert.equal(decide('native', true, false, 'coding'), 'native')
-})
-
-check('decideExposure：native 未运行 / AI 保活中 → 降级 hidden（仍可 dsh_mcp_call）', () => {
+check('decideExposure：native 档已移除 → 视为非法值回落 name-only', () => {
+  assert.equal(decide('native', true, false, 'coding'), 'name-only', '旧数据 native 回落默认档')
   assert.equal(decide('native', false, false, 'coding'), 'hidden')
-  assert.equal(decide('native', true, true, 'coding'), 'hidden')
 })
 
 check('decideExposure：name-only 运行中 → name-only；未运行 → hidden', () => {
@@ -131,37 +127,35 @@ check('decideExposure：off 恒定 off（运行时也不可调用）', () => {
   assert.equal(decide('off', true, true, 'coding'), 'off')
 })
 
-check('decideExposure：预设隔离优先于一切档位（含 native 运行中）', () => {
+check('decideExposure：预设隔离优先于一切档位（含 name-only 运行中）', () => {
   const only = { mode: 'only', ids: ['coding'] }
-  assert.equal(decide('native', true, false, 'standard', only), 'off')
+  assert.equal(decide('name-only', true, false, 'standard', only), 'off')
   assert.equal(decide('name-only', true, false, undefined, only), 'off')
   assert.equal(decide('hidden', true, false, 'standard', only), 'off')
-  assert.equal(decide('native', true, false, 'coding', only), 'native')
+  assert.equal(decide('name-only', true, false, 'coding', only), 'name-only')
 })
 
 check('decideExposure：except 模式下被排除的预设不可用，其他可用', () => {
   const except = { mode: 'except', ids: ['coding'] }
-  assert.equal(decide('native', true, false, 'coding', except), 'off')
-  assert.equal(decide('native', true, false, 'standard', except), 'native')
-  assert.equal(decide('native', true, false, undefined, except), 'native')
+  assert.equal(decide('name-only', true, false, 'coding', except), 'off')
+  assert.equal(decide('name-only', true, false, 'standard', except), 'name-only')
+  assert.equal(decide('name-only', true, false, undefined, except), 'name-only')
 })
 
 /* ── 档位派生语义 ───────────────────────────────────────────────────── */
 
-check('injectionOf / injectsTools：仅 native 注入工具', () => {
-  assert.equal(x.injectionOf('native'), 'tools')
+check('injectionOf：仅 name-only 暴露名称，其余不注入（工具 schema 永不注入）', () => {
   assert.equal(x.injectionOf('name-only'), 'name')
   assert.equal(x.injectionOf('hidden'), 'none')
   assert.equal(x.injectionOf('off'), 'none')
-  assert.deepEqual(['native', 'name-only', 'hidden', 'off'].map(x.injectsTools), [true, false, false, false])
 })
 
 check('callableUnder：off 不可调用，其余可调用', () => {
-  assert.deepEqual(['native', 'name-only', 'hidden', 'off'].map(x.callableUnder), [true, true, true, false])
+  assert.deepEqual(['name-only', 'hidden', 'off'].map(x.callableUnder), [true, true, false])
 })
 
-check('listedInSummary：native/name-only 进摘要表，hidden/off 不进', () => {
-  assert.deepEqual(['native', 'name-only', 'hidden', 'off'].map(x.listedInSummary), [true, true, false, false])
+check('listedInSummary：仅 name-only 进摘要表，hidden/off 不进', () => {
+  assert.deepEqual(['name-only', 'hidden', 'off'].map(x.listedInSummary), [true, false, false])
 })
 
 check('policyDisablesTool：全名精确匹配；空策略不算禁用', () => {
@@ -188,14 +182,14 @@ check('hasV1PolicyData：任一 v1 字段非空即需要迁移', () => {
   assert.ok(x.hasV1PolicyData({ mcp: { '/p.yml': { 'mcp-a': { desired: true } } } }))
 })
 
-check('migrateV1Policies：autoManage=true 时停用态迁移为 hidden，启用态为 native', () => {
+check('migrateV1Policies：autoManage=true 时停用态迁移为 hidden，启用态为 name-only', () => {
   const result = x.migrateV1Policies(
     { mcp: { '/p.yml': { 'mcp-a': { desired: true }, 'mcp-b': { desired: false } } } },
     resolveRow,
     true,
   )
   assert.equal(result.servers.a.exposure, 'hidden')
-  assert.equal(result.servers.b.exposure, 'native')
+  assert.equal(result.servers.b.exposure, 'name-only')
   assert.equal(result.migrated, 2)
   assert.deepEqual(result.unresolved, [])
 })
@@ -212,7 +206,7 @@ check('migrateV1Policies：rowId → serverName 走解析器（mcp-anki 例外�
     true,
   )
   assert.equal(result.servers['anki-mcp'].exposure, 'hidden')
-  assert.equal(result.servers.filesystem.exposure, 'native')
+  assert.equal(result.servers.filesystem.exposure, 'name-only')
 })
 
 check('migrateV1Policies：解析不到 serverName 的行进入 unresolved（不静默丢弃）', () => {
@@ -232,7 +226,7 @@ check('migrateV1Policies：项目级启停迁移到 projects 分区', () => {
     true,
   )
   assert.equal(result.projects['/ws-a']['srv-1'].exposure, 'hidden')
-  assert.equal(result.projects['/ws-a']['srv-2'].exposure, 'native')
+  assert.equal(result.projects['/ws-a']['srv-2'].exposure, 'name-only')
   assert.equal(result.migrated, 2)
 })
 

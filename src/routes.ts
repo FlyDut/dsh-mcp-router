@@ -564,7 +564,7 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
             return {
               applyMode: stateApplyMode(state),
               middleLayer: config.middleLayer !== false,
-              defaultExposure: config.defaultExposure ?? 'native',
+              defaultExposure: config.defaultExposure ?? 'name-only',
             }
           },
         },

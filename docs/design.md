@@ -1,6 +1,6 @@
-# 设计：四档曝光模型与预设运行时隔离（v0.6.0）
+# 设计：三档曝光模型与预设运行时隔离
 
-> 状态：已实施（v0.6.0） · 取代旧文档 `design-mcp-control.md`（形态 1/2 + 全局 autoManage 双形态设计）
+> 状态：已实施 · 本项目 `dsh-mcp-router`（自 `dsh-mcp-skill-panel` 分叉，技能功能已剥离） · 取代旧文档 `design-mcp-control.md`（形态 1/2 + 全局 autoManage 双形态设计）
 
 ## 1. 目标与范围
 
@@ -18,16 +18,17 @@
 
 ## 2. 领域模型
 
-### 2.1 四档
+### 2.1 三档
 
 | 档位 | 进程 | 上下文注入 | `dsh_mcp_search` | `dsh_mcp_call` |
 | --- | --- | --- | --- | --- |
-| `native` | 运行 | 全部 `mcp__<s>__*` schema | 摘要表列出（标注已注入） | 可调用 |
 | `name-only` | 运行 | 一行「服务器名 + 摘要」索引段 | 摘要表列出 | 可调用 |
 | `hidden` | 停用（调用时保活 → 空闲回收） | 无 | 仅关键词命中返回 | 可调用 |
 | `off` | 停用 | 无 | 不出现 | 拒绝 |
 
-档位与「进程期望状态」由一个纯函数绑定：`desiredRunning(exposure) = exposure === 'native' || 'name-only'`。用户切档位 = 隐式启停进程，不再有第二个开关。
+**没有任何档位把 `mcp__<s>__*` 工具 schema 注入上下文**：工具一律经 `dsh_mcp_search` / `dsh_mcp_call` 按需调用。档位只决定「进程是否常驻」与「服务器名是否出现在索引段/摘要表」。
+
+档位与「进程期望状态」由一个纯函数绑定：`desiredRunning(exposure) = exposure === 'name-only'`。用户切档位 = 隐式启停进程，不再有第二个开关。
 
 ### 2.2 预设关联
 
@@ -49,9 +50,9 @@ decideExposure({ policy, running, aiActive, presetId }) : Exposure
 
 1. `!presetAllows(policy.presets, presetId)` → `off`（隔离优先于一切）
 2. `off` / `hidden` → 原样（与运行态无关：`hidden` 在保活窗口内也不注入）
-3. `native` / `name-only`：`running && !aiActive` → 原档；否则 **降级 `hidden`**（工具不注入，但仍可 `dsh_mcp_call`）
+3. `name-only`：`running && !aiActive` → `name-only`；否则 **降级 `hidden`**（不出现名称，但仍可 `dsh_mcp_call`）
 
-第 3 条是刻意的：进程没起来（启动失败、物化未及）或正被中间层托管时，宁可少注入也不能让能力静默消失。装配层、`dsh_mcp_search`、`dsh_mcp_call`、面板徽标全部消费这一个函数，杜绝「看得到调不动」。
+第 3 条是刻意的：进程没起来（启动失败、物化未及）或正被中间层托管时，宁可少暴露也不能让能力静默消失。装配层、`dsh_mcp_search`、`dsh_mcp_call`、面板徽标全部消费这一个函数，杜绝「看得到调不动」。
 
 ## 3. 分层与模块职责
 
@@ -71,7 +72,7 @@ infra    state.ts（state.json）· preset.ts（组合文件文本 + 启动物�
 | `domain/exposure.ts` | 领域语义（档位、隔离、迁移、物化规则） | 零 import：可被 `lib/exposure.js` 独立构建与真值表自测 |
 | `domain/policy.ts` | 策略真源：intent（落盘）与 effective（运行时）两份表 | 装配路径只读 effective；写路径只经 `set()` |
 | `domain/registry.ts` | 把 loader 行 / preset standing 行 / 项目行归一为 `ServerRef` | 维护**同步**快照（装配不能 await），未就绪时调用方保守放行 |
-| `domain/assembly.ts` | 唯一的上下文注入点 | 合并了旧实现里三个独立 filter；每回合构建一次计划，O(1) 查表 |
+| `domain/assembly.ts` | 唯一的工具集过滤点 + 索引段注入点 | 合并了旧实现里三个独立 filter；每回合构建一次计划，O(1) 查表 |
 | `mcpcall.ts` | 保活启用 → 等注册 → 执行 → 空闲回收；`dsh_mcp_search` / `dsh_mcp_call` | 通过 `accessOf/accessFor` 复用同一个判定 |
 | `preset.ts` | 物化目标解析 + 启动早期物化 | 运行期**绝不**写组合文件（事故铁律） |
 | `domain/composition-file.ts` | 组合/patch 文件的文本级行操作（块定位、删除、config 键读写、缩进行标志） | 纯文本：保留注释、`!!js` 与用户排版（YAML 库的 dump 会全丢） |
@@ -85,7 +86,7 @@ infra    state.ts（state.json）· preset.ts（组合文件文本 + 启动物�
 ```jsonc
 {
   "version": 2,
-  "servers":  { "<serverName>": { "exposure": "native", "presets": {"mode":"only","ids":["coding"]}, "disabledTools": ["mcp__s__t"], "applied": false } },
+  "servers":  { "<serverName>": { "exposure": "name-only", "presets": {"mode":"only","ids":["coding"]}, "disabledTools": ["mcp__s__t"], "applied": false } },
   "projects": { "<workspace>": { "<serverName>": { /* 同 servers */ } } },
   "ai":       { "<entryId>": { "at": 1750000000000 } },
   "config":   { "applyMode": "immediate" }
@@ -127,15 +128,15 @@ registry.refreshNow()        # 物化改变了 disabled，复扫
 
 ## 5. 关键决策
 
-1. **四档取代「启用/停用 + 全局 autoManage」**：旧设计有两个状态维度（物理启停 × 全局是否走中间层）和两条可见性路径，用户要在脑子里做笛卡尔积。四档把「注入多少」与「进程是否运行」绑成一个语义清晰的阶梯。
-2. **档位驱动进程**：不保留独立的启停按钮。切到隐藏/关闭即停进程（省资源），切到原生注入/仅名称即启动。
+1. **三档取代「启用/停用 + 全局 autoManage」**：旧设计有两个状态维度（物理启停 × 全局是否走中间层）和两条可见性路径，用户要在脑子里做笛卡尔积。三档把「暴露多少」与「进程是否运行」绑成一个语义清晰的阶梯。v0.6.0 曾有第四档 `native`（工具 schema 直注入上下文），因本插件定位是「按需调用路由」而移除；旧 state.json 里的 `native` 加载时经 `normalizePolicy` 回落为 `name-only`（进程照跑，工具改为按需调用）。
+2. **档位驱动进程**：不保留独立的启停按钮。切到隐藏/关闭即停进程（省资源），切到仅名称即启动。
 3. **`only` 白名单 / `except` 黑名单双向都支持**：只做其一都会有用户无法表达的场景（「只有 coding 用」vs「除了 ptc 都能用」）。
 4. **预设隔离不改物理状态**：用户明确要求「一个会话用一个 MCP，另一个会话不用，总不能既开着又关着」——隔离是装配/检索/调用三处的运行时判定，进程共享一份。
 5. **`name-only` 用 system-prompt section 注入**：`systemPrompt.section({ text: (context) => … })` 每次装配求值且能拿到 `context.agent`，因此可以按会话的 preset 动态渲染；索引段无内容时返回空串，不贡献 token。
-6. **注册表同步快照 + 保守放行**：装配在同步路径（waterfall / section provider 不能 await），preset 行又只能异步读，所以快照未就绪时一律保留工具（宁可多注入也不误伤）。
+6. **注册表同步快照 + 保守放行**：装配在同步路径（waterfall / section provider 不能 await），preset 行又只能异步读，所以快照未就绪时一律保留工具（宁可多留也不误伤）。
 7. **单一装配监听器**：旧实现有三个各自 `filter` 的 `system-prompt/assemble` 监听器（可见性 / 工具禁用 / 项目工作区），语义分散且新增维度要复制三份；现在合并为一个监听器 + 一个纯决策函数。
 8. **`dsh_mcp_call` 支持只传 server**：`name-only` 的模型不知道工具名，让其「先猜再试」体验很差；不传工具名（或传 `*`）直接返回工具清单，把发现成本压到一次调用。
-9. **`dsh_mcp_search` 摘要分层**：摘要表列出 `native`（标注已注入）与 `name-only`（名字本就暴露），`hidden` 只给计数提示（不泄漏名字但提示检索入口），`off` 与预设隔离的完全不出现。
+9. **`dsh_mcp_search` 摘要分层**：摘要表列出 `name-only`（名字本就暴露），`hidden` 只给计数提示（不泄漏名字但提示检索入口），`off` 与预设隔离的完全不出现。
 10. **保留启动期物化 + 铁律**：把「用户手工改过组合文件」识别为外部修改并只对齐账本（首次遇到则按文件现状采用），避免插件反向覆盖用户配置。
 11. **编辑走文本级替换而非 YAML 库**：这些文件承载注释、`!!js` 与用户排版，`yaml.dump` 会把它们全丢掉（loader 自己就不用 dump 回写用户文件）。
 12. **预设组合行只读**：运行期写 `agent.cordis.yml` 会触发 standing 重挂事故；「关闭」档位在可见性与可调用性上等效于删除，是更安全的替代路径。
@@ -147,22 +148,22 @@ registry.refreshNow()        # 物化改变了 disabled，复扫
 | 场景 | 处理 |
 | --- | --- |
 | 会话无 preset（rosterless 部署） | `only` 不可用；`all` / `except` 可用 |
-| `native`/`name-only` 但进程未运行 | 降级 `hidden`：工具不注入、`dsh_mcp_call` 仍可用（保活或提示需重启物化） |
+| `name-only` 但进程未运行 | 降级 `hidden`：名称不出现、`dsh_mcp_call` 仍可用（保活或提示需重启物化） |
 | preset 行不在 loader（rc.1 起） | 注册表经 `compositionInventory` + 组合文件文本解析得到，装配按会话 preset 精确取行 |
 | `agentPresets` 服务视图受限（HTTP 路径历史问题） | 面板 `/presets` 降级为「已配置 id 仍展示并生效」+ 错误文案；判定路径不依赖该服务 |
 | 预设 id 被删除 | 配置保留、UI 标注「已不存在」、判定仍按 id 比较 |
 | state.json 损坏 | 逐字段宽容解析（`normalizePolicy`），非法值回落默认档位 |
 | 迁移时行解析不到 serverName | 记入 `diagnostics().unresolved` 并告警，不静默丢弃 |
-| 工具级禁用与档位冲突 | 禁用优先（`native` 档下也过滤） |
+| 工具级禁用与档位冲突 | 禁用优先（任何档位都过滤） |
 | AI 保活窗口内用户改档位 | `markUserEnabled` 清 AI 标记；回收器不再回收用户接管的 server |
 
 ## 7. 测试策略
 
-- `scripts/selftest-exposure.mjs`（走 `lib/exposure.js`）：四档真值表、隔离三模式 × preset 有无、`desiredRunning`、注入形态、工具禁用、v1→v2 迁移（含 unresolved 与幂等）、物化规则 `decideSyncAction`。
+- `scripts/selftest-exposure.mjs`（走 `lib/exposure.js`）：三档真值表、隔离三模式 × preset 有无、`desiredRunning`、注入形态、工具禁用、v1→v2 迁移（含 unresolved 与幂等）、物化规则 `decideSyncAction`。
 - `scripts/selftest-policy.mjs`（临时 HOME，真实文件）：数据目录搬迁、v1→v2 迁移写回与备份、生效时机（immediate / next-session）、**全局行物化落到 patch 文件**与幂等。
 - `scripts/selftest-composition-file.mjs`（走 `lib/composition-file.js`）：行块定位（单行/多行/带注释/CRLF）、删除（含空块清理与归属注释）、config 键读取（`!!js` 标记）、config 替换（动态键保留原文）、缩进行标志读写。
 - `scripts/selftest-external-import.mjs`（走 `lib/external-import.js`）：五种形态嗅探、字段归一（`type: local|remote`、`command` 数组拆分、`environment` → `env`、`enabled: false` 标注）、坏输入与边界。
 - `scripts/selftest-mcp-edit.mjs`（最小 ctx 桩 + 真实文件）：patch 行改写/改名迁移/删除、项目行 JSON 写回与键定位、只读拒绝、详情初值、失败时不改文件。
 - `scripts/selftest-mcp.mjs`：catalog 检索打分、组合文件文本操作、项目工作空间扫描去重、mcpServers JSON 转换、`dsh_mcp_call` 参数归一化（双重前缀 / 双编码回归）。
 - `pnpm verify`：产物形态（external 未内联、`lib/exposure.js` 无依赖、client 包装与导出）。
-- 端到端手测清单见 README「验证清单」（四档行为、预设隔离、工具禁用、重启保持）。
+- 端到端手测清单见 README「验证清单」（三档行为、预设隔离、工具禁用、重启保持）。

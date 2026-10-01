@@ -5,16 +5,18 @@
  * 档位判定、预设隔离判定、v1→v2 策略迁移都收敛在这里，且**不依赖 Cordis 运行时**
  * （零 import），因此可被 scripts/selftest-exposure.mjs 直接以构建产物覆盖。
  *
- * ── 四档语义（每 server 一个档位，同时决定进程期望状态）──────────────────
+ * ── 三档语义（每 server 一个档位，同时决定进程期望状态）──────────────────
  *
  * | exposure    | 进程            | 上下文注入              | dsh_mcp_search            | dsh_mcp_call |
  * |-------------|-----------------|-------------------------|-----------------------|----------|
- * | `native`    | 运行            | 全部 mcp__<s>__* schema | 摘要表列出（已注入）   | 可调用   |
  * | `name-only` | 运行            | 无工具，仅 server 名索引 | 摘要表列出            | 可调用   |
  * | `hidden`    | 停用（按需保活） | 无                      | 仅关键词命中返回       | 可调用   |
  * | `off`       | 停用            | 无                      | 完全不出现            | 拒绝     |
  *
- * `native` / `name-only` 期望进程运行；`hidden` / `off` 期望进程停用（由
+ * 插件定位是「纯按需调用路由」：任何档位都不把 `mcp__<s>__*` 工具 schema 注入
+ * 上下文，模型一律经 `dsh_mcp_search` 发现、`dsh_mcp_call` 调用。
+ *
+ * `name-only` 期望进程运行；`hidden` / `off` 期望进程停用（由
  * {@link desiredRunning} 派生，用户切档位即隐式启停）。`hidden` 的 server 仍可被
  * 模型经 `dsh_mcp_call` 保活启用（临时运行 → 调用 → 空闲回收），这正是「完全被中间层
  * 托管」的语义；`off` 连这条路径也关掉。
@@ -27,7 +29,7 @@
  */
 
 /** 曝光档位。 */
-export type Exposure = 'native' | 'name-only' | 'hidden' | 'off'
+export type Exposure = 'name-only' | 'hidden' | 'off'
 
 /** 预设关联模式。 */
 export type PresetMode = 'all' | 'only' | 'except'
@@ -47,7 +49,7 @@ export interface ServerPolicy {
 }
 
 /** 全部档位（面板渲染顺序：从最曝光到最封闭）。 */
-export const EXPOSURE_VALUES: readonly Exposure[] = ['native', 'name-only', 'hidden', 'off']
+export const EXPOSURE_VALUES: readonly Exposure[] = ['name-only', 'hidden', 'off']
 
 /** 全部预设模式。 */
 export const PRESET_MODES: readonly PresetMode[] = ['all', 'only', 'except']
@@ -62,8 +64,8 @@ export function isPresetMode(value: unknown): value is PresetMode {
   return typeof value === 'string' && (PRESET_MODES as readonly string[]).includes(value)
 }
 
-/** 构造默认策略（未配置过的 server 默认全部 = DSH 原本行为）。 */
-export function defaultPolicy(exposure: Exposure = 'native'): ServerPolicy {
+/** 构造默认策略（未配置过的 server 默认仅名称索引、按需调用）。 */
+export function defaultPolicy(exposure: Exposure = 'name-only'): ServerPolicy {
   return { exposure, presets: { mode: 'all', ids: [] }, disabledTools: [] }
 }
 
@@ -90,7 +92,7 @@ export function normalizePresetScope(raw: unknown): PresetScope {
 }
 
 /** 宽容解析完整策略（缺字段/非法值回落默认；`fallbackExposure` 供 Config 默认档位注入）。 */
-export function normalizePolicy(raw: unknown, fallbackExposure: Exposure = 'native'): ServerPolicy {
+export function normalizePolicy(raw: unknown, fallbackExposure: Exposure = 'name-only'): ServerPolicy {
   if (raw === null || typeof raw !== 'object') return defaultPolicy(fallbackExposure)
   const obj = raw as { exposure?: unknown; presets?: unknown; disabledTools?: unknown }
   return {
@@ -125,7 +127,7 @@ export function presetAllows(scope: PresetScope, presetId: string | null | undef
 
 /** 该档位是否期望 loader entry 运行（用户切档位即隐式启停进程）。 */
 export function desiredRunning(exposure: Exposure): boolean {
-  return exposure === 'native' || exposure === 'name-only'
+  return exposure === 'name-only'
 }
 
 /** 判定输入的运行时现场。 */
@@ -145,7 +147,7 @@ export interface ExposureInput {
  * 判定顺序（先隔离、再档位、最后运行态降级）：
  * 1. 预设不允许 → `off`（运行时隔离，物理状态不变）；
  * 2. `off` / `hidden` 档 → 原样返回；
- * 3. `native` / `name-only` 档：进程在跑且非 AI 保活窗口 → 原档；否则降级为
+ * 3. `name-only` 档：进程在跑且非 AI 保活窗口 → 原档；否则降级为
  *    `hidden`（进程未跑或正被中间层托管：工具不注入，但仍可经 dsh_mcp_call 调用，
  *    不静默丢失能力）。
  */
@@ -157,9 +159,8 @@ export function decideExposure(input: ExposureInput): Exposure {
       return 'off'
     case 'hidden':
       return 'hidden'
-    case 'native':
     case 'name-only':
-      return running && !aiActive ? policy.exposure : 'hidden'
+      return running && !aiActive ? 'name-only' : 'hidden'
     default:
       return 'off'
   }
@@ -182,24 +183,12 @@ export function offReason(
   return presetAllows(policy.presets, presetId) ? 'exposure' : 'preset'
 }
 
-/** 有效曝光对模型的意义：注入工具 / 仅暴露名称 / 完全不暴露。 */
-export type Injection = 'tools' | 'name' | 'none'
+/** 有效曝光对模型的意义：仅暴露名称 / 完全不暴露（本插件不做工具 schema 注入）。 */
+export type Injection = 'name' | 'none'
 
 /** 由有效曝光映射到注入形态。 */
 export function injectionOf(effective: Exposure): Injection {
-  switch (effective) {
-    case 'native':
-      return 'tools'
-    case 'name-only':
-      return 'name'
-    default:
-      return 'none'
-  }
-}
-
-/** 该有效曝光下该 server 的工具是否进入模型目录。 */
-export function injectsTools(effective: Exposure): boolean {
-  return injectionOf(effective) === 'tools'
+  return effective === 'name-only' ? 'name' : 'none'
 }
 
 /** 该有效曝光下模型是否可经 dsh_mcp_call 调用该 server（`off` 拒绝）。 */
@@ -209,10 +198,10 @@ export function callableUnder(effective: Exposure): boolean {
 
 /** 该有效曝光下该 server 是否出现在 dsh_mcp_search 的无参摘要表。 */
 export function listedInSummary(effective: Exposure): boolean {
-  return effective === 'native' || effective === 'name-only'
+  return effective === 'name-only'
 }
 
-/** 工具注册全名是否被策略禁用（工具级禁用，native 档下同样生效）。 */
+/** 工具注册全名是否被策略禁用（工具级禁用）。 */
 export function policyDisablesTool(policy: ServerPolicy | undefined, fullName: string): boolean {
   if (!policy || policy.disabledTools.length === 0) return false
   return policy.disabledTools.includes(fullName)
@@ -284,7 +273,7 @@ export interface MigrationResult {
 function slot<T extends Record<string, ServerPolicy>>(table: T, key: string): ServerPolicy {
   const hit = table[key]
   if (hit) return hit
-  const created = defaultPolicy('native')
+  const created = defaultPolicy()
   ;(table as Record<string, ServerPolicy>)[key] = created
   return created
 }
@@ -302,7 +291,7 @@ function mergeTools(policy: ServerPolicy, tools: unknown): void {
  * 映射规则：
  * - `mcp[file][rowId].desired === true`（用户停用）→ `hidden`（旧 autoManage 开启，
  *   停用的 MCP 由中间层按需调用）或 `off`（旧 autoManage 关闭，停用即完全不可用）；
- *   `desired === false`（用户启用）→ `native`。
+ *   `desired === false`（用户启用）→ `name-only`。
  * - `projectMcp[workspace][serverName]` 同理（boolean 值即 desired disabled）。
  * - `toolDisabled[serverName]` / `projectToolDisabled[workspace][serverName]` →
  *   对应策略的 `disabledTools`。
@@ -335,7 +324,7 @@ export function migrateV1Policies(
       }
       const desired = (entry as { desired?: unknown }).desired
       if (typeof desired !== 'boolean') continue
-      slot(servers, serverName).exposure = desired ? stoppedExposure : 'native'
+      slot(servers, serverName).exposure = desired ? stoppedExposure : 'name-only'
       migrated += 1
     }
   }
@@ -346,7 +335,7 @@ export function migrateV1Policies(
     const table = (projects[workspace] ??= {})
     for (const [serverName, desired] of Object.entries(perServer)) {
       if (typeof desired !== 'boolean') continue
-      slot(table, serverName).exposure = desired ? stoppedExposure : 'native'
+      slot(table, serverName).exposure = desired ? stoppedExposure : 'name-only'
       migrated += 1
     }
   }

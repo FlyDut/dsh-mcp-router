@@ -55,7 +55,7 @@ const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'))
 /* ── ① 数据目录迁移 + v1 → v2 迁移 ─────────────────────────────────── */
 
 // 造一份 v1 状态：一个已停用的 server（旧 autoManage=true → 应迁移为 hidden）、
-// 一个已启用的 server（→ native）、一个工具级禁用表，放在**历史目录**里。
+// 一个已启用的 server（→ name-only）、一个工具级禁用表，放在**历史目录**里。
 mkdirSync(legacyDir, { recursive: true })
 const presetFile = join(fakeHome, 'agent.cordis.yml')
 writeFileSync(
@@ -93,7 +93,7 @@ const { createPolicyStore } = index
 const applied = []
 const policy = createPolicyStore({
   ctx: makeCtx(),
-  fallbackExposure: 'native',
+  fallbackExposure: 'name-only',
   onEffectiveChanged: (changes) => {
     for (const change of changes) applied.push(change.serverName)
   },
@@ -106,7 +106,7 @@ await checkAsync('policy.load：历史目录自动搬迁 + v1 → v2 迁移写�
   assert.equal(state.version, 2)
   assert.ok(state.servers.alpha, 'alpha 应迁移进 servers 分区')
   assert.equal(state.servers.alpha.exposure, 'hidden', 'autoManage=true + 已停用 → hidden')
-  assert.equal(state.servers.beta.exposure, 'native', '已启用 → native')
+  assert.equal(state.servers.beta.exposure, 'name-only', '已启用 → name-only')
   assert.deepEqual(state.servers.beta.disabledTools, ['mcp__beta__danger'], '工具级禁用并入策略')
   assert.equal(state.mcp, undefined, 'v1 字段应被清除')
   assert.equal(state.config.autoManage, undefined, '旧 autoManage 应被清除')
@@ -130,17 +130,17 @@ await checkAsync('policy.set（immediate）：意图与生效同步更新 + 落�
 
 await checkAsync('policy.set（next-session）：只改意图不改生效，commitPending 后提升', async () => {
   applied.length = 0
-  const result = await policy.set({ serverName: 'alpha', patch: { exposure: 'native' }, applyMode: 'next-session' })
+  const result = await policy.set({ serverName: 'alpha', patch: { exposure: 'name-only' }, applyMode: 'next-session' })
   assert.equal(result.applied, false)
-  assert.equal(policy.intent('alpha', undefined).exposure, 'native', '意图应更新')
+  assert.equal(policy.intent('alpha', undefined).exposure, 'name-only', '意图应更新')
   assert.equal(policy.effective('alpha', undefined).exposure, 'hidden', '生效值应保持不变')
   assert.equal(policy.isPending('alpha', undefined), true)
   assert.deepEqual(applied, [], '未生效不应触发进程状态回调')
-  assert.equal(readJson(stateFile).servers.alpha.exposure, 'native', '意图应已落盘')
+  assert.equal(readJson(stateFile).servers.alpha.exposure, 'name-only', '意图应已落盘')
 
   const promoted = await policy.commitPending()
   assert.equal(promoted, 1)
-  assert.equal(policy.effective('alpha', undefined).exposure, 'native', 'commit 后生效值跟上')
+  assert.equal(policy.effective('alpha', undefined).exposure, 'name-only', 'commit 后生效值跟上')
   assert.equal(policy.isPending('alpha', undefined), false)
   assert.deepEqual(applied, ['alpha'])
 })
@@ -165,8 +165,8 @@ await checkAsync('policy.set：预设关联与工具禁用规范化（去重排�
 await checkAsync('policy.set（带 workspace）：写入 projects 分区，与全局表互不干扰', async () => {
   await policy.set({ serverName: 'proj-x', workspace: '/ws/a', patch: { exposure: 'hidden' }, applyMode: 'immediate' })
   assert.equal(policy.effective('proj-x', '/ws/a').exposure, 'hidden')
-  assert.equal(policy.effective('proj-x', '/ws/b').exposure, 'native', '其他工作空间不受影响')
-  assert.equal(policy.effective('proj-x', undefined).exposure, 'native', '全局表不受影响')
+  assert.equal(policy.effective('proj-x', '/ws/b').exposure, 'name-only', '其他工作空间不受影响')
+  assert.equal(policy.effective('proj-x', undefined).exposure, 'name-only', '全局表不受影响')
   const state = readJson(stateFile)
   assert.equal(state.projects['/ws/a']['proj-x'].exposure, 'hidden')
 })
@@ -195,12 +195,12 @@ await checkAsync('policy：坏字段宽容解析（非法档位回落默认，�
   writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf8')
   // 同一进程内 state 有内存缓存：直接验证 normalizePolicy 的宽容性（读路径的兜底）
   const normalized = index.decideExposure({
-    policy: { exposure: 'native', presets: { mode: 'all', ids: [] }, disabledTools: [] },
+    policy: { exposure: 'name-only', presets: { mode: 'all', ids: [] }, disabledTools: [] },
     running: true,
     aiActive: false,
     presetId: undefined,
   })
-  assert.equal(normalized, 'native')
+  assert.equal(normalized, 'name-only')
 })
 
 /* ── ⑧ 全局行（profile patch 行）的停用物化（v0.6.0 缺陷回归）────────── */

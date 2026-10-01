@@ -133,7 +133,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
   /** 待确认删除的行（null = 未打开确认框）。 */
   const [removing, setRemoving] = useState<McpRow | null>(null)
   const [removingBusy, setRemovingBusy] = useState(false)
-  const [defaultExposure, setDefaultExposure] = useState<string>('native')
+  const [defaultExposure, setDefaultExposure] = useState<string>('name-only')
   const warnTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const seq = useRef(0)
 
@@ -455,10 +455,6 @@ export function McpPanelSection(props: Props): React.ReactElement {
             <div style={C.stat}>
               <span style={C.statValue}>{view.mcpTotal}</span>
               <span style={C.statLabel}>{t('mp.statServers')}</span>
-            </div>
-            <div style={C.stat}>
-              <span style={C.statValue}>{view.mcpNative}</span>
-              <span style={C.statLabel}>{t('mp.statNative')}</span>
             </div>
             <div style={C.stat}>
               <span style={C.statValue}>{view.mcpNameOnly}</span>

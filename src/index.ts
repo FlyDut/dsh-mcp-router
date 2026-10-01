@@ -89,7 +89,7 @@ export interface Config {
   searchLimitMax?: number
   /** 能力摘要表（name-only 索引段与 dsh_mcp_search 摘要用）。 */
   serverSummary?: Record<string, string>
-  /** 未配置过的 MCP 服务器使用的默认档位。默认 native（DSH 原生行为）。 */
+  /** 未配置过的 MCP 服务器使用的默认档位。默认 name-only（进程运行、按需调用）。 */
   defaultExposure?: Exposure
   /** 是否注册中间层工具（dsh_mcp_search / dsh_mcp_call）。默认 true。 */
   middleLayer?: boolean
@@ -100,9 +100,9 @@ export const Config: Schema<Config> = Schema.object({
   searchLimitDefault: Schema.number().min(1).description('dsh_mcp_search 缺省 top-K').default(5),
   searchLimitMax: Schema.number().min(1).description('dsh_mcp_search top-K 上限').default(10),
   serverSummary: Schema.dict(Schema.string()).description('MCP 能力摘要表（serverName → 一句话）'),
-  defaultExposure: Schema.union(['native', 'name-only', 'hidden', 'off'])
+  defaultExposure: Schema.union(['name-only', 'hidden', 'off'])
     .description('未配置 MCP 的默认档位')
-    .default('native'),
+    .default('name-only'),
   middleLayer: Schema.boolean().description('注册 dsh_mcp_search / dsh_mcp_call 中间层工具').default(true),
 })
 
@@ -306,7 +306,7 @@ function createCatalogRuntime(): CatalogRuntime {
 export function apply(ctx: Context, config: Config = {}): void {
   const caches = createDomainCaches()
   const catalogRuntime = createCatalogRuntime()
-  const fallbackExposure: Exposure = config.defaultExposure ?? 'native'
+  const fallbackExposure: Exposure = config.defaultExposure ?? 'name-only'
 
   // 注册表：三种来源归一（loader 行同步、preset standing 行异步刷新）
   const registry: Registry = createRegistry(ctx, () => caches.invalidateMcp())
