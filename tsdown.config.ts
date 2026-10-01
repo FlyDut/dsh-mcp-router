@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown'
 
 /**
- * Node 半区铁律：external 全部 @deepseek-ai/*（含 schemastery/dsh-scope），
+ * Node 半区铁律：deps.neverBundle 全部 @deepseek-ai/*（含 schemastery/dsh-scope），
  * 否则 tsdown 会把 dsh-tools 之类内联进 bundle → 第二个 TOOL_RUNTIME_SCHEDULER
  * Symbol → 工具调度崩溃。运行时经 profile 闭包 junction 解析到宿主同一份模块。
  *
@@ -20,7 +20,7 @@ export default defineConfig([
     outDir: 'lib',
     target: 'node22',
     platform: 'node',
-    external: [/^@deepseek-ai\//, /^node:/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
     dts: false,
     clean: true,
     sourcemap: false,
@@ -35,7 +35,7 @@ export default defineConfig([
     outDir: 'lib',
     target: 'node22',
     platform: 'node',
-    external: [/^@deepseek-ai\//, /^node:/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
     dts: false,
     clean: false,
     sourcemap: false,
@@ -45,13 +45,13 @@ export default defineConfig([
   },
   {
     // 私有 catalog（纯逻辑）单独产物，供 scripts/selftest-mcp.mjs 用临时目录自测；
-    // external 与外置铁律一致，不内联任何 @deepseek-ai 运行时。
+    // neverBundle 与外置铁律一致，不内联任何 @deepseek-ai 运行时。
     entry: ['src/catalog.ts'],
     format: ['esm'],
     outDir: 'lib',
     target: 'node22',
     platform: 'node',
-    external: [/^@deepseek-ai\//, /^node:/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
     dts: false,
     clean: false,
     sourcemap: false,
@@ -67,7 +67,7 @@ export default defineConfig([
     outDir: 'lib',
     target: 'node22',
     platform: 'node',
-    external: [/^@deepseek-ai\//, /^node:/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
     dts: false,
     clean: false,
     sourcemap: false,
@@ -83,7 +83,7 @@ export default defineConfig([
     outDir: 'lib',
     target: 'node22',
     platform: 'node',
-    external: [/^@deepseek-ai\//, /^node:/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
     dts: false,
     clean: false,
     sourcemap: false,
@@ -99,7 +99,7 @@ export default defineConfig([
     outDir: 'lib',
     target: 'node22',
     platform: 'node',
-    external: [/^@deepseek-ai\//, /^node:/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
     dts: false,
     clean: false,
     sourcemap: false,
@@ -115,7 +115,7 @@ export default defineConfig([
     outDir: 'lib',
     target: 'node22',
     platform: 'node',
-    external: [/^@deepseek-ai\//, /^node:/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
     dts: false,
     clean: false,
     sourcemap: false,
@@ -130,7 +130,7 @@ export default defineConfig([
     outDir: 'lib',
     target: 'es2022',
     platform: 'browser',
-    external: [/^@deepseek-ai\//, /^react(\/.*)?$/],
+    deps: { neverBundle: [/^@deepseek-ai\//, /^react(\/.*)?$/] },
     clean: false,
     sourcemap: false,
     outputOptions: {
