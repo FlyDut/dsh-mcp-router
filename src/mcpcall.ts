@@ -22,7 +22,6 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
-import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { Catalog, SearchHit } from './catalog'
@@ -52,8 +51,6 @@ export interface McpAccess {
 const REAPER_INTERVAL_MS = 10_000
 /** waitRegistered 轮询间隔（ms）。 */
 const REGISTER_POLL_MS = 50
-/** 默认注册 / 调用超时：60s。 */
-const DEFAULT_TOOL_TIMEOUT_MS = 60_000
 
 /**
  * 控制工具名（单一事实源）。

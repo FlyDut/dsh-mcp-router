@@ -68,7 +68,7 @@ const KNOWN_CONFIG_KEYS = new Set([
 ])
 
 /** 解析某行的可写目标（预设行返回 readonly，附来源文件供面板提示）。 */
-export async function resolveWritableTarget(deps: EditDeps, ref: ServerRef): Promise<WritableTarget> {
+export async function resolveWritableTarget(ref: ServerRef): Promise<WritableTarget> {
   if (ref.source === 'preset') return { kind: 'readonly', reason: 'preset', file: ref.file ?? '' }
   if (ref.source === 'project') {
     const workspace = ref.workspace ?? ''
@@ -269,7 +269,7 @@ export async function updateServer(deps: EditDeps, input: { serverName: string; 
   const { ctx, registry, policy } = deps
   const ref = registry.refFor(input.serverName, undefined)
   if (!ref) throw new Error(`未知 MCP server：${input.serverName}`)
-  const target = await resolveWritableTarget(deps, ref)
+  const target = await resolveWritableTarget(ref)
   if (target.kind === 'readonly') throw readonlyError(input.serverName, target)
 
   const renameRequested = input.patch.serverName !== undefined && input.patch.serverName !== ref.serverName
@@ -397,7 +397,7 @@ export async function removeServer(deps: EditDeps, input: { serverName: string; 
   const { ctx, registry, policy } = deps
   const ref = registry.refFor(input.serverName, undefined)
   if (!ref) throw new Error(`未知 MCP server：${input.serverName}`)
-  const target = await resolveWritableTarget(deps, ref)
+  const target = await resolveWritableTarget(ref)
   if (target.kind === 'readonly') throw readonlyError(input.serverName, target)
 
   if (target.kind === 'patch') {
@@ -451,10 +451,10 @@ export interface ServerDetail {
 }
 
 export async function describeServer(deps: EditDeps, input: { serverName: string; workspace?: string }): Promise<ServerDetail> {
-  const { ctx, registry } = deps
+  const { registry } = deps
   const ref = registry.refFor(input.serverName, undefined)
   if (!ref) throw new Error(`未知 MCP server：${input.serverName}`)
-  const target = await resolveWritableTarget(deps, ref)
+  const target = await resolveWritableTarget(ref)
   // 只读目标（预设行）不读基线：面板只展示来源与说明，不提供表单
   let config: ServerConfigPatch = { serverName: ref.serverName }
   if (target.kind === 'patch') config = patchBaseFromLoader(deps, ref)
@@ -472,11 +472,6 @@ export async function describeServer(deps: EditDeps, input: { serverName: string
     detail.readonly = `声明在预设组合文件 ${basename(target.file) || target.file}（只读）`
   }
   return detail
-}
-
-/** 供 server-card 展示「是否可写」用（避免前端重复实现来源判定）。 */
-export function isWritableRef(ref: ServerRef): boolean {
-  return ref.source !== 'preset'
 }
 
 /** 项目文件与 patch 文件同名键的展示辅助（诊断/日志）。 */

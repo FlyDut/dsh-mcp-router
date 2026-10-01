@@ -17,7 +17,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   type Exposure,
-  type PresetScope,
   type ServerPolicy,
   defaultPolicy,
   hasV1PolicyData,

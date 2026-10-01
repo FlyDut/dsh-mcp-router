@@ -41,16 +41,6 @@ export function modal(widthPx: number, gap = 12): CSSProperties {
 /** 弹窗标题（16px/600）。 */
 export const title: CSSProperties = { margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }
 
-/** 单行提示（超长截断省略）。 */
-export const hintNowrap: CSSProperties = {
-  margin: 0,
-  fontSize: 11,
-  color: 'var(--dsw-alias-label-tertiary)',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
 /** 块状提示（可换行，行高 16px）。 */
 export const hintBlock: CSSProperties = { margin: 0, fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', lineHeight: '16px' }
 

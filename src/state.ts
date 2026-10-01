@@ -16,7 +16,7 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
-import type { Exposure, PresetScope, ServerPolicy } from './domain/exposure'
+import type { ServerPolicy } from './domain/exposure'
 
 const STATE_DIR = join(homedir(), '.dsh', 'dsh-mcp-router')
 /** 历史目录（独立分叉前叫 dsh-mcp-panel；0.6.0 之前叫 dsh-mcp-skill-panel、0.2.0 之前叫 dsh-runtime-inventory）。 */
@@ -82,62 +82,6 @@ export type ApplyMode = 'immediate' | 'next-session'
 /** 当前生效时机（缺省 immediate）。 */
 export function stateApplyMode(state: StateFile): ApplyMode {
   return state.config?.applyMode === 'next-session' ? 'next-session' : 'immediate'
-}
-
-/* ── 策略读写（v2 分区，纯函数）──────────────────────────────────────── */
-
-/** 取某 server 的策略槽（不存在返回 undefined）。workspace 缺省 = 全局表。 */
-export function policySlotOf(
-  state: StateFile,
-  serverName: string,
-  workspace?: string,
-): ServerPolicyState | undefined {
-  if (typeof workspace === 'string' && workspace.length > 0) return state.projects?.[workspace]?.[serverName]
-  return state.servers?.[serverName]
-}
-
-/** 写入某 server 的策略（自动建表）。workspace 缺省 = 全局表。 */
-export function setPolicySlot(
-  state: StateFile,
-  serverName: string,
-  policy: ServerPolicyState,
-  workspace?: string,
-): void {
-  if (typeof workspace === 'string' && workspace.length > 0) {
-    state.projects ??= {}
-    const table = (state.projects[workspace] ??= {})
-    table[serverName] = policy
-    return
-  }
-  state.servers ??= {}
-  state.servers[serverName] = policy
-}
-
-/** 删除某 server 的策略槽（回落默认）。返回是否确实删除。 */
-export function clearPolicySlot(state: StateFile, serverName: string, workspace?: string): boolean {
-  if (typeof workspace === 'string' && workspace.length > 0) {
-    const table = state.projects?.[workspace]
-    if (!table || !(serverName in table)) return false
-    delete table[serverName]
-    if (Object.keys(table).length === 0) delete state.projects?.[workspace]
-    return true
-  }
-  if (!state.servers || !(serverName in state.servers)) return false
-  delete state.servers[serverName]
-  return true
-}
-
-/** 构造策略槽（默认值 + 可选覆盖），供端点与迁移共用。 */
-export function makePolicyState(
-  patch: Partial<{ exposure: Exposure; presets: PresetScope; disabledTools: string[]; applied?: boolean }> = {},
-): ServerPolicyState {
-  const out: ServerPolicyState = {
-    exposure: patch.exposure ?? 'name-only',
-    presets: patch.presets ?? { mode: 'all', ids: [] },
-    disabledTools: patch.disabledTools ?? [],
-  }
-  if (patch.applied !== undefined) out.applied = patch.applied
-  return out
 }
 
 /* ── 文件 IO ─────────────────────────────────────────────────────────── */

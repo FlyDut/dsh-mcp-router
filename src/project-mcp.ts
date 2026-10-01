@@ -21,13 +21,11 @@
  *   消除「下次会话进入前按全局展示/工具禁用作用域错判」的泄漏窗口。
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 import { watch, type FSWatcher } from 'node:fs'
 import { access, readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { McpServers, McpRowConfig } from './mcp-convert'
 import { parseMcpServersJson, resolveServersEnv, serversToRows } from './mcp-convert'
-import { serverOfMcp } from './catalog'
 import { isMcpEntry, serverNameOf } from './mcp-entry'
 import { readState } from './state'
 import { messageOf } from './util'
@@ -52,12 +50,6 @@ export function projectServerOwner(serverName: string): string | undefined {
 /** 最近一次会话进入的工作空间（add project 目标 + 面板展示当前工作区）。 */
 export function getActiveWorkspace(): string | null {
   return activeWorkspace
-}
-
-/** 路径比较：Windows 下忽略大小写（同一路径大小写不同视为同一工作区）。 */
-function strEquals(a: string, b: string | null | undefined, mode?: 'ignorecase'): boolean {
-  if (typeof b !== 'string') return false
-  return mode === 'ignorecase' ? a.toLowerCase() === b.toLowerCase() : a === b
 }
 
 interface WorkspaceState {

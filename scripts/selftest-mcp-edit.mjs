@@ -175,7 +175,7 @@ await policy.set({ serverName: 'alpha', patch: { exposure: 'hidden', presets: { 
 /* ── 只读目标 ─────────────────────────────────────────────────────── */
 
 await checkAsync('resolveWritableTarget：预设行 → readonly（附来源文件）', async () => {
-  const target = await index.resolveWritableTarget({ ctx: makeCtx(), registry, policy }, presetRef)
+  const target = await index.resolveWritableTarget(presetRef)
   assert.equal(target.kind, 'readonly')
   assert.equal(target.reason, 'preset')
   assert.ok(target.file.endsWith('agent.cordis.yml'))

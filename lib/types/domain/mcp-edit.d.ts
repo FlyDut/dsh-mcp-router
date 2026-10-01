@@ -36,7 +36,7 @@ export interface ServerConfigPatch {
     toolCallTimeoutMs?: number;
 }
 /** 解析某行的可写目标（预设行返回 readonly，附来源文件供面板提示）。 */
-export declare function resolveWritableTarget(deps: EditDeps, ref: ServerRef): Promise<WritableTarget>;
+export declare function resolveWritableTarget(ref: ServerRef): Promise<WritableTarget>;
 /** 合并补丁与原配置（未提供的字段保持原值；数组/字典整体替换）。 */
 export declare function mergeConfig(base: ServerConfigPatch, patch: ServerConfigPatch): ServerConfigPatch;
 /** 回显脱敏哨兵：env/headers 的**键名保留**，值替换为它（整表单回写时视为「保留原值」）。 */
@@ -108,7 +108,5 @@ export declare function describeServer(deps: EditDeps, input: {
     serverName: string;
     workspace?: string;
 }): Promise<ServerDetail>;
-/** 供 server-card 展示「是否可写」用（避免前端重复实现来源判定）。 */
-export declare function isWritableRef(ref: ServerRef): boolean;
 /** 项目文件与 patch 文件同名键的展示辅助（诊断/日志）。 */
 export declare function targetLabel(target: WritableTarget): string;

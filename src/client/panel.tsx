@@ -33,7 +33,6 @@ const C = {
   page: { display: 'flex', flexDirection: 'column' as const, gap: '12px', maxWidth: '820px', padding: '4px 2px' },
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' },
   title: { margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' },
-  meta: { margin: '2px 0 0', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' },
   refresh: {
     font: 'inherit',
     cursor: 'pointer',
@@ -400,12 +399,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
   return (
     <div style={C.page}>
       <div style={C.header}>
-        <div>
-          <h2 style={C.title}>{t('mp.nav')}</h2>
-          <p style={C.meta}>
-            {view ? `${t('mp.preset')}: ${view.preset ?? '—'} · ${t('mp.session')}: ${view.sessionId ?? '—'}` : ''}
-          </p>
-        </div>
+        <h2 style={C.title}>{t('mp.nav')}</h2>
         <div style={{ display: 'flex', gap: 8 }}>
           {/* 按钮文字保持简短，完整说明放在 title（悬停可见） */}
           <button type="button" style={C.refresh} title={t('mp.addBtnHint')} onClick={() => setShowAdd(true)}>

@@ -207,27 +207,3 @@ export async function listAllPresetMcpRows(ctx: Context): Promise<PresetMcpRowWi
   return out
 }
 
-/**
- * 按长 entryId 反查其所属 preset 行（toggleMcp 预设兜底用）。
- * 逐 preset 找 entryId 命中，找到即 resolve+read+parse 该 preset。
- */
-export async function findPresetRowByEntryId(
-  ctx: Context,
-  entryId: string,
-): Promise<{ presetId: string; row: PresetMcpRow; presetPath: string } | undefined> {
-  const inventory = await readInventory(ctx)
-  const presets = ctx.agentPresets as unknown as PresetReaderService
-  for (const c of inventory) {
-    const pid = String(c?.id ?? '')
-    if (!pid) continue
-    const hit = (c.rows ?? []).find((r) => String(r?.entryId ?? '') === entryId && String(r?.moduleName ?? '') === MCP_CLIENT_NAME)
-    if (!hit) continue
-    const presetPath = await presetPathOf(ctx, pid)
-    if (!presetPath) continue
-    const text = String((await presets.read(pid)) as unknown as string)
-    const [row] = mergeRows([hit], parsePresetMcpText(text), presetPath)
-    if (!row) continue
-    return { presetId: pid, row: { ...row, entryId }, presetPath }
-  }
-  return undefined
-}

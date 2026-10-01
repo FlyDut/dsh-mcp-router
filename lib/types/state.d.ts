@@ -1,4 +1,4 @@
-import type { Exposure, PresetScope, ServerPolicy } from './domain/exposure';
+import type { ServerPolicy } from './domain/exposure';
 /** 当前状态文件版本。 */
 export declare const STATE_VERSION = 2;
 /** 每个预设文件（key=文件绝对路径）→ 每个 mcp 行 → 意图与上次物化状态（v1，仅迁移读）。 */
@@ -49,19 +49,6 @@ export type StateFile = {
 export type ApplyMode = 'immediate' | 'next-session';
 /** 当前生效时机（缺省 immediate）。 */
 export declare function stateApplyMode(state: StateFile): ApplyMode;
-/** 取某 server 的策略槽（不存在返回 undefined）。workspace 缺省 = 全局表。 */
-export declare function policySlotOf(state: StateFile, serverName: string, workspace?: string): ServerPolicyState | undefined;
-/** 写入某 server 的策略（自动建表）。workspace 缺省 = 全局表。 */
-export declare function setPolicySlot(state: StateFile, serverName: string, policy: ServerPolicyState, workspace?: string): void;
-/** 删除某 server 的策略槽（回落默认）。返回是否确实删除。 */
-export declare function clearPolicySlot(state: StateFile, serverName: string, workspace?: string): boolean;
-/** 构造策略槽（默认值 + 可选覆盖），供端点与迁移共用。 */
-export declare function makePolicyState(patch?: Partial<{
-    exposure: Exposure;
-    presets: PresetScope;
-    disabledTools: string[];
-    applied?: boolean;
-}>): ServerPolicyState;
 export declare function readState(): Promise<StateFile>;
 export declare function writeState(state: StateFile): Promise<void>;
 /** 状态文件路径（诊断端点与迁移备份用）。 */

@@ -15,8 +15,6 @@ export declare const overlay: CSSProperties;
 export declare function modal(widthPx: number, gap?: number): CSSProperties;
 /** 弹窗标题（16px/600）。 */
 export declare const title: CSSProperties;
-/** 单行提示（超长截断省略）。 */
-export declare const hintNowrap: CSSProperties;
 /** 块状提示（可换行，行高 16px）。 */
 export declare const hintBlock: CSSProperties;
 /** 表单字段标签。 */

@@ -13,8 +13,6 @@ export const en: Record<string, string> = {
   'mp.refresh': 'Refresh',
   'mp.loading': 'Loading…',
   'mp.empty': 'No MCP servers found.',
-  'mp.session': 'Session',
-  'mp.preset': 'Preset',
   'mp.working': 'Working…',
   'mp.toggleError': 'Failed: {error}',
   // stats
@@ -166,8 +164,6 @@ export const zh: Record<string, string> = {
   'mp.refresh': '刷新',
   'mp.loading': '加载中…',
   'mp.empty': '未发现 MCP 服务器',
-  'mp.session': '会话',
-  'mp.preset': '预设',
   'mp.working': '处理中…',
   'mp.toggleError': '全部：{error}',
   // 统计

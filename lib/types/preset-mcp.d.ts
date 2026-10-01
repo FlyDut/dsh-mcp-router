@@ -68,12 +68,3 @@ export declare function listPresetMcpRows(ctx: Context, presetId: string): Promi
  * preset 直接跳过（避免无谓的 read 与文件 IO）。
  */
 export declare function listAllPresetMcpRows(ctx: Context): Promise<PresetMcpRowWithPreset[]>;
-/**
- * 按长 entryId 反查其所属 preset 行（toggleMcp 预设兜底用）。
- * 逐 preset 找 entryId 命中，找到即 resolve+read+parse 该 preset。
- */
-export declare function findPresetRowByEntryId(ctx: Context, entryId: string): Promise<{
-    presetId: string;
-    row: PresetMcpRow;
-    presetPath: string;
-} | undefined>;
