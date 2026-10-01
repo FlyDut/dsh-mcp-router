@@ -2,6 +2,14 @@
   "name": "dsh-mcp-router",
   "version": "0.0.1",
   "description": "MCP 按需调用的路由",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FlyDut/dsh-mcp-router.git"
+  },
+  "homepage": "https://github.com/FlyDut/dsh-mcp-router#readme",
+  "bugs": {
+    "url": "https://github.com/FlyDut/dsh-mcp-router/issues"
+  },
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",
