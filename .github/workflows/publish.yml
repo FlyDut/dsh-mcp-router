@@ -5,9 +5,9 @@ name: publish
 # 前置条件（一次性）：
 #   1) 首次在本地手动 `npm publish` 一次创建包 —— Trusted Publisher 配置入口在「包的 Settings 页面」，
 #      包必须已存在于 registry 才能进入该页面。
-#   2) 在 npmjs.com 该包页面：Settings → Trusted publishing → GitHub Actions，填写：
-#        Organization or user : lilyblessing
-#        Repository          : dsh-mcp-panel   ← 2026-09 起包与仓库已改名（改名后需在 npm 包的 Settings 里更新 Trusted Publisher 的 Repository 字段）
+#   2) 在 npmjs.com 该包（dsh-mcp-router）页面：Settings → Trusted publishing → GitHub Actions，填写：
+#        Organization or user : FlyDut
+#        Repository          : dsh-mcp-router
 #        Workflow filename   : publish.yml   ← 必须与本文件名完全一致
 #        Environment name    : 留空
 #        Allowed actions     : npm publish
@@ -15,6 +15,7 @@ name: publish
 #      本流水线即自动发布；provenance 由 trusted publishing 自动附加，无需 --provenance、无需 NODE_AUTH_TOKEN。
 #
 # 注意：Trusted Publishing 要求 npm CLI >= 11.5.1（node 22 自带 npm 10），故先全局升级 npm。
+# 依赖安装用 pnpm（与 build.yml、仓库 lockfile 一致），发布仍走 npm。
 
 on:
   release:
@@ -38,27 +39,31 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
+          cache: pnpm
           registry-url: https://registry.npmjs.org
 
       - name: Upgrade npm (>= 11.5.1 required for trusted publishing)
         run: npm install -g npm@latest
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps --ignore-scripts --no-audit --no-fund
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Build (tsdown -> tsc dts)
-        run: npm run build
+        run: pnpm run build
 
       - name: Verify artifacts
-        run: npm run verify
+        run: pnpm run verify
 
-      - name: Selftest (catalog / preset logic)
+      - name: 'Selftest (catalog / preset text / project mcp / conversion)'
         run: node scripts/selftest-mcp.mjs
 
       - name: Publish to npm (OIDC trusted publishing, provenance auto-attached)
-        run: npm publish
+        # --ignore-scripts：跳过 prepublishOnly（其 build/verify/selftest 已在上面的步骤里跑过）
+        run: npm publish --ignore-scripts
