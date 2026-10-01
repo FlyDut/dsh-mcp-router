@@ -41,13 +41,13 @@ export function apply(ctx: ClientCtx): void {
         zh,
         en,
       }),
-    'mcp-panel: dictionaries',
+    'dsh-mcp-router: dictionaries',
   )
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       {
         name: 'settings.section',
-        id: 'mcp-panel',
+        id: 'dsh-mcp-router',
         order: 30,
         label: () => t('mp.nav'),
         locale: NS,

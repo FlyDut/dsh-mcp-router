@@ -1,5 +1,5 @@
 /**
- * HTTP 路由层：策略读写、启停意图、预设列表与诊断端点（前缀 `/api/mcp-panel`）。
+ * HTTP 路由层：策略读写、启停意图、预设列表与诊断端点（前缀 `/api/dsh-mcp-router`）。
  *
  * 设计（P2-6 收敛）：`handle`/`handleAny` 统一 method 校验 / 异步错误响应 /
  * `{ok:true}` 包装；写操作要求 `x-panel-token` 与本进程随机令牌一致（阻断跨源 /
@@ -37,9 +37,9 @@ import { describeServer, removeServer, updateServer, maskConfigSecrets, type Ser
 import type { PresetListView } from './shared-types'
 import { messageOf } from './util'
 
-const API_PREFIX = '/api/mcp-panel'
-/** 旧前缀（0.3.1 及以前为 /api/runtime-inventory），保留兼容 */
-const LEGACY_API_PREFIX = '/api/runtime-inventory'
+const API_PREFIX = '/api/dsh-mcp-router'
+/** 旧前缀（独立分叉前为 /api/mcp-panel，0.3.1 及以前为 /api/runtime-inventory），保留兼容 */
+const LEGACY_API_PREFIXES = ['/api/mcp-panel', '/api/runtime-inventory']
 /** 进程级随机令牌：写操作（策略/config）要求客户端在 x-panel-token 头携带。 */
 const PANEL_TOKEN = randomBytes(32).toString('hex')
 /** readBody 体积上限：防无界 body 累积（本地 DoS 向量）。 */
@@ -290,7 +290,7 @@ async function addGlobalMcp(
       mounted.push(row)
     } catch (error) {
       skipped.push(String(row.config.serverName))
-      ctx.logger.warn?.(`mcp-panel: 全局 MCP "${row.config.serverName}" 挂载失败: ${messageOf(error)}`)
+      ctx.logger.warn?.(`dsh-mcp-router: 全局 MCP "${row.config.serverName}" 挂载失败: ${messageOf(error)}`)
     }
   }
   if (mounted.length === 0) return { file, added: 0, skipped }
@@ -818,12 +818,14 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
       }, true),
     },
   ]
-  // 旧前缀兼容（0.3.1 及以前）：同一组路由在新旧前缀下都注册
+  // 旧前缀兼容（dsh-mcp-panel / runtime-inventory 时代）：同一组路由在新旧前缀下都注册
   return [
     ...routes,
-    ...routes.map((route) => ({
-      ...route,
-      path: route.path.replace(API_PREFIX, LEGACY_API_PREFIX),
-    })),
+    ...LEGACY_API_PREFIXES.flatMap((prefix) =>
+      routes.map((route) => ({
+        ...route,
+        path: route.path.replace(API_PREFIX, prefix),
+      })),
+    ),
   ]
 }

@@ -94,7 +94,7 @@ infra    state.ts（state.json）· preset.ts（组合文件文本 + 启动物�
 
 `applied` 是物化账本（上次写入组合文件的 `disabled`，`null` = 文件中无该键）。它与用户意图放在同一条目里，便于一次原子写盘。
 
-目录：`~/.dsh/dsh-mcp-panel/`（`state.json` + `catalog.json`）；首次访问时从 `dsh-mcp-skill-panel` / `dsh-runtime-inventory` 搬迁。
+目录：`~/.dsh/dsh-mcp-router/`（`state.json` + `catalog.json`）；首次访问时从 `dsh-mcp-panel` / `dsh-mcp-skill-panel` / `dsh-runtime-inventory` 搬迁。
 
 ### 4.2 启动序列
 

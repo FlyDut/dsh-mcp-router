@@ -34,7 +34,7 @@ check('isPresetMode：三模式合法，其余非法', () => {
 
 /* ── 策略规范化（宽容解析，绝不因坏数据抛错）─────────────────────────── */
 
-check('defaultPolicy：默认原生注入 + 全部预设 + 无禁用工具', () => {
+check('defaultPolicy：默认全部 + 全部预设 + 无禁用工具', () => {
   assert.deepEqual(x.defaultPolicy(), { exposure: 'native', presets: { mode: 'all', ids: [] }, disabledTools: [] })
   assert.equal(x.defaultPolicy('hidden').exposure, 'hidden')
 })
@@ -105,7 +105,7 @@ check('desiredRunning：native/name-only 运行，hidden/off 停用', () => {
 const decide = (exposure, running, aiActive, presetId, scope = { mode: 'all' }) =>
   x.decideExposure({ policy: x.normalizePolicy({ exposure, presets: scope }), running, aiActive, presetId })
 
-check('decideExposure：native 运行中 → native（原生注入）', () => {
+check('decideExposure：native 运行中 → native（全部）', () => {
   assert.equal(decide('native', true, false, 'coding'), 'native')
 })
 

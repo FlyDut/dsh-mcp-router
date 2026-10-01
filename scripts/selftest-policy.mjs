@@ -11,11 +11,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // 必须在 import 构建产物之前改 HOME：state.ts 在模块加载时就用 homedir() 求值目录
-const fakeHome = mkdtempSync(join(tmpdir(), 'mcp-panel-policy-'))
+const fakeHome = mkdtempSync(join(tmpdir(), 'dsh-mcp-router-policy-'))
 process.env.HOME = fakeHome
 process.env.USERPROFILE = fakeHome
 
-const dataDir = join(fakeHome, '.dsh', 'dsh-mcp-panel')
+const dataDir = join(fakeHome, '.dsh', 'dsh-mcp-router')
 const legacyDir = join(fakeHome, '.dsh', 'dsh-mcp-skill-panel')
 const stateFile = join(dataDir, 'state.json')
 

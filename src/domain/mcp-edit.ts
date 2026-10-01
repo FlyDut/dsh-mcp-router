@@ -101,7 +101,7 @@ async function remountQuietly(ctx: Context, policy: PolicyStore, workspace: stri
   try {
     await remountWorkspace(ctx, workspace, policy)
   } catch (error) {
-    ctx.logger.warn?.(`mcp-panel: remount workspace "${workspace}" failed: ${messageOf(error)}`)
+    ctx.logger.warn?.(`dsh-mcp-router: remount workspace "${workspace}" failed: ${messageOf(error)}`)
   }
 }
 
@@ -361,7 +361,7 @@ export async function updateServer(deps: EditDeps, input: { serverName: string; 
       applied = true
     }
   } catch (error) {
-    ctx.logger.debug?.(`mcp-panel: runtime update for "${ref.serverName}" skipped (${messageOf(error)})`)
+    ctx.logger.debug?.(`dsh-mcp-router: runtime update for "${ref.serverName}" skipped (${messageOf(error)})`)
   }
 
   if (nextName !== ref.serverName) {
@@ -429,11 +429,11 @@ export async function removeServer(deps: EditDeps, input: { serverName: string; 
     await ctx.loader.remove(ref.entryId)
     unloaded = true
   } catch (error) {
-    ctx.logger.debug?.(`mcp-panel: loader remove for "${ref.serverName}" skipped (${messageOf(error)})`)
+    ctx.logger.debug?.(`dsh-mcp-router: loader remove for "${ref.serverName}" skipped (${messageOf(error)})`)
   }
 
   const cleared = await policy.clear(ref.serverName, ref.workspace)
-  if (cleared) ctx.logger.info?.(`mcp-panel: cleared policy of removed MCP "${ref.serverName}"`)
+  if (cleared) ctx.logger.info?.(`dsh-mcp-router: cleared policy of removed MCP "${ref.serverName}"`)
   await registry.refreshNow()
 
   return { serverName: ref.serverName, file: target.file, unloaded }

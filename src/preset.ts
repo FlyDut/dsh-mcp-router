@@ -116,7 +116,6 @@ export async function syncPresetFiles(deps: SyncPresetDeps): Promise<number> {
     if (!loaded) continue
     let text = loaded.text
     let changed = false
-    let ledgerChanged = false
     for (const row of rows) {
       if (!findRowBlock(text, row.rowId)) continue // 行确实不存在（用户已删除）：放弃管理
       // 无 disabled 键 = 未停用（与 setRowFlag 的语义一致）—— 必须归一为 false，
@@ -128,8 +127,7 @@ export async function syncPresetFiles(deps: SyncPresetDeps): Promise<number> {
       if (action === 'align-ledger') {
         // 文件被外部改过：尊重现状（对齐账本，不覆盖）
         await policy.markApplied(row.serverName, undefined, cur)
-        ledgerChanged = true
-        ctx.logger.info?.(`mcp-panel: ${row.serverName}: composition externally modified, aligning ledger`)
+        ctx.logger.info?.(`dsh-mcp-router: ${row.serverName}: composition externally modified, aligning ledger`)
         continue
       }
       if (action === 'noop') {
@@ -151,7 +149,6 @@ export async function syncPresetFiles(deps: SyncPresetDeps): Promise<number> {
       await writeFile(tmp, text, 'utf8')
       await rename(tmp, file)
     }
-    void ledgerChanged
   }
   return materialized
 }

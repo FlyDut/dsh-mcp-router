@@ -7,8 +7,25 @@
  *
  * 扫描是**只读**的：面板不会修改任何源文件，也不会同步源文件后续变化（一次性快照）。
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
+import { authHeaders } from './auth'
 import { describeError, readJson } from './http'
+import {
+  action,
+  disabled as disabledStyle,
+  error,
+  footer,
+  hintBlock,
+  label,
+  modal,
+  monoInput,
+  overlay,
+  primary,
+  row,
+  success,
+  tab,
+  title,
+} from './ui'
 
 interface Props {
   t: (key: string, params?: Record<string, string | number>) => string
@@ -47,31 +64,12 @@ type Exposure = 'native' | 'name-only' | 'hidden' | 'off'
 
 const EXPOSURES: Exposure[] = ['native', 'name-only', 'hidden', 'off']
 
+/** 样式薄别名层：共享件来自 ui.ts；group/item/badge 系列为本弹窗特有。 */
 const C = {
-  overlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    background: 'rgba(0, 0, 0, 0.45)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  },
-  modal: {
-    width: 'min(760px, calc(100vw - 48px))',
-    maxHeight: 'calc(100vh - 80px)',
-    overflowY: 'auto' as const,
-    background: 'var(--dsw-alias-bg-layer-1)',
-    border: '1px solid var(--dsw-alias-border-l2)',
-    borderRadius: 10,
-    padding: '16px 18px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 10,
-    boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
-  },
-  title: { margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' },
-  hint: { margin: 0, fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', lineHeight: '16px' },
+  overlay,
+  modal: modal(760, 10),
+  title,
+  hint: hintBlock,
   group: {
     border: '1px solid var(--dsw-alias-border-l2)',
     borderRadius: 8,
@@ -93,70 +91,16 @@ const C = {
     background: bg,
     whiteSpace: 'nowrap' as const,
   }),
-  input: {
-    font: 'inherit',
-    fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-    fontSize: 12,
-    lineHeight: '18px',
-    background: 'var(--dsw-alias-bg-layer-2)',
-    color: 'var(--dsw-alias-label-primary)',
-    border: '1px solid var(--dsw-alias-border-l2)',
-    borderRadius: 6,
-    padding: '6px 8px',
-    flex: 1,
-  },
-  row: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' as const },
-  label: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' },
-  tab: (active: boolean): React.CSSProperties => ({
-    font: 'inherit',
-    cursor: 'pointer',
-    border: '1px solid',
-    borderRadius: 6,
-    padding: '4px 12px',
-    fontSize: 12,
-    fontWeight: active ? 600 : 400,
-    color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-tertiary)',
-    background: active ? 'color-mix(in srgb, var(--dsw-alias-state-info-primary, #4a90d9) 16%, transparent)' : 'transparent',
-    borderColor: active ? 'var(--dsw-alias-state-info-primary, #4a90d9)' : 'var(--dsw-alias-border-l2)',
-  }),
-  action: {
-    font: 'inherit',
-    cursor: 'pointer',
-    border: '1px solid var(--dsw-alias-border-l2)',
-    background: 'var(--dsw-alias-bg-layer-1)',
-    color: 'var(--dsw-alias-label-secondary)',
-    borderRadius: 6,
-    padding: '5px 14px',
-    fontSize: 12,
-  },
-  primary: {
-    font: 'inherit',
-    cursor: 'pointer',
-    border: 0,
-    borderRadius: 6,
-    padding: '5px 16px',
-    fontSize: 12,
-    color: 'var(--dsw-alias-label-inverse, #fff)',
-    background: 'var(--dsw-alias-state-success-primary)',
-  },
-  disabled: { opacity: 0.55, cursor: 'progress' } as React.CSSProperties,
-  error: {
-    fontSize: 12,
-    color: 'var(--dsw-alias-label-primary)',
-    background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent)',
-    borderLeft: '3px solid var(--dsw-alias-state-error-primary)',
-    borderRadius: 6,
-    padding: '8px 10px',
-  },
-  success: {
-    fontSize: 12,
-    color: 'var(--dsw-alias-label-primary)',
-    background: 'color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent)',
-    borderLeft: '3px solid var(--dsw-alias-state-success-primary)',
-    borderRadius: 6,
-    padding: '8px 10px',
-  },
-  footer: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 },
+  input: monoInput({ flex: 1 }),
+  row: row({ flexWrap: 'wrap' as const }),
+  label,
+  tab: (active: boolean): React.CSSProperties => tab(active, 12),
+  action,
+  primary,
+  disabled: disabledStyle,
+  error,
+  success,
+  footer: footer({ marginTop: 4 }),
 }
 
 export function ImportMcpModal(props: Props): React.ReactElement {
@@ -171,30 +115,12 @@ export function ImportMcpModal(props: Props): React.ReactElement {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<string | null>(null)
 
-  const tokenPromise = useRef<Promise<string | null> | null>(null)
-  const ensureToken = useCallback(() => {
-    if (!tokenPromise.current) {
-      tokenPromise.current = fetch('/api/mcp-panel/token')
-        .then((r) => r.json() as Promise<{ token?: string }>)
-        .then((b) => b?.token ?? null)
-        .catch(() => null)
-    }
-    return tokenPromise.current
-  }, [])
-
-  const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
-    const headers: Record<string, string> = { 'content-type': 'application/json' }
-    const token = await ensureToken()
-    if (token) headers['x-panel-token'] = token
-    return headers
-  }, [ensureToken])
-
   const scan = useCallback(
     async (extraPaths: string[] = []) => {
       setScanning(true)
       setError(null)
       try {
-        const res = await fetch('/api/mcp-panel/mcp/scan', {
+        const res = await fetch('/api/dsh-mcp-router/mcp/scan', {
           method: 'POST',
           headers: await authHeaders(),
           body: JSON.stringify({ paths: extraPaths }),
@@ -208,7 +134,7 @@ export function ImportMcpModal(props: Props): React.ReactElement {
         setScanning(false)
       }
     },
-    [authHeaders, t],
+    [t],
   )
 
   useEffect(() => {
@@ -234,7 +160,7 @@ export function ImportMcpModal(props: Props): React.ReactElement {
     try {
       const mcpServers: Record<string, unknown> = {}
       for (const server of chosen) mcpServers[server.name] = server.config
-      const res = await fetch('/api/mcp-panel/mcp/add', {
+      const res = await fetch('/api/dsh-mcp-router/mcp/add', {
         method: 'POST',
         headers: await authHeaders(),
         body: JSON.stringify({ json: JSON.stringify({ mcpServers }), target }),
@@ -248,9 +174,9 @@ export function ImportMcpModal(props: Props): React.ReactElement {
       }>(res)
       if (!body.ok) throw new Error(body.error ?? 'import failed')
       const names = body.names ?? chosen.map((server) => server.name)
-      // 导入后统一设档位（原生注入以外的档位才有必要写策略）
+      // 导入后统一设档位（全部以外的档位才有必要写策略）
       if (exposure !== 'native' && names.length > 0) {
-        await fetch('/api/mcp-panel/policy', {
+        await fetch('/api/dsh-mcp-router/policy', {
           method: 'POST',
           headers: await authHeaders(),
           body: JSON.stringify({ updates: names.map((name) => ({ serverName: name, exposure })) }),
@@ -270,7 +196,7 @@ export function ImportMcpModal(props: Props): React.ReactElement {
     } finally {
       setImporting(false)
     }
-  }, [authHeaders, chosen, exposure, onImported, scan, t, target])
+  }, [chosen, exposure, onImported, scan, t, target])
 
   return (
     <div style={C.overlay} role="dialog" aria-modal="true" onClick={onClose}>

@@ -9,7 +9,7 @@
  *            （项目级 MCP 额外要求会话工作空间匹配）
  * ```
  *
- * - `native`    → 该 server 的 `mcp__<s>__*` 工具全部保留（DSH 原生注入）
+ * - `native`    → 该 server 的 `mcp__<s>__*` 工具全部保留（DSH 全部）
  * - `name-only` → 工具全部过滤，但 server 名与摘要进入「服务器索引段」
  * - `hidden`    → 工具过滤，索引段不出现（仅 dsh_mcp_search 可检索、dsh_mcp_call 可调用）
  * - `off`       → 工具过滤，索引段不出现，dsh_mcp_call 拒绝
@@ -22,7 +22,7 @@ import { type Exposure, type ServerPolicy } from './exposure';
 import type { PolicyStore } from './policy';
 import type { Registry, ServerRef } from './registry';
 /** name-only 索引段的段名（唯一，避免与其它插件冲突）。 */
-export declare const SERVER_INDEX_SECTION = "mcp-panel:server-index";
+export declare const SERVER_INDEX_SECTION = "dsh-mcp-router:server-index";
 /** 一次装配的判定计划。 */
 export interface AssemblyPlan {
     presetId: string | undefined;

@@ -269,6 +269,16 @@ check('setRowFlagAt：行不存在时抛错（调用方需感知）', () => {
   assert.throws(() => cf.setRowFlagAt(PATCH, 'mcp-nope', 'disabled', true), /not found/)
 })
 
+check('setRowFlagAt：CRLF 文件往返保持 CRLF 且逐字节还原（原 smoke.mjs 场景）', () => {
+  const crlf = PATCH.replace(/\n/g, '\r\n')
+  const disabled = cf.setRowFlagAt(crlf, 'mcp-Tabby', 'disabled', true)
+  assert.equal(cf.rowFlagAt(disabled, 'mcp-Tabby', 'disabled'), true, 'CRLF 下禁用生效')
+  assert.ok(disabled.includes('\r\n'), 'CRLF 应保持')
+  assert.equal(cf.rowFlagAt(disabled, 'mcp-brave-search', 'disabled'), null, '其它行不受影响')
+  const restored = cf.setRowFlagAt(disabled, 'mcp-Tabby', 'disabled', false)
+  assert.equal(restored, crlf, '恢复后应与原文逐字节一致')
+})
+
 /* ── dedentLines ─────────────────────────────────────────────────── */
 
 check('dedentLines：去掉公共缩进并忽略空行', () => {

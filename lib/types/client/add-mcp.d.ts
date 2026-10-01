@@ -1,11 +1,15 @@
 /**
- * 添加 MCP 弹窗（快速迁移）：粘贴其它 harness 的 mcpServers JSON，
- * 在弹窗内选择「全局 / 项目」目标，转换预览后确认添加。
+ * 添加 MCP 弹窗（表单式）—— 替代早期的「粘贴 mcpServers JSON」输入框。
  *
- * - 全局：写入 <profile>/cordis.patch.yml（- insert: 块，${VAR} → !!js 表达式）+ 立即挂载
- * - 项目：写入 <workspace>/.dsh/mcps/mcp.json（与子目录扫描去重规则一致）+ 重扫挂载
- * 全部逻辑（token / 预览 / 添加 / 结果展示）都在本组件内部，对 views.tsx 零侵入。
- * 样式走宿主 --dsw-alias-* 主题变量（与 views.tsx 一致），本地私有 C，不导出。
+ * 交互（对齐设计稿 1/2）：类型（stdio / streamable-http）→ 唯一标题 → 随类型切换的
+ * 连接字段 →「配置预览」实时显示将写入的 JSON。确认后走既有 `/mcp/add`：
+ * 全局写 <profile>/cordis.patch.yml 并立即挂载，项目写
+ * <workspace>/.dsh/mcps/mcp.json 并重扫挂载。
+ *
+ * 表单形状与 `mcp-convert.ts` 的解析口径一致（`type`/`command`/`args`/`env` 或
+ * `type`/`url`/`headers`），因此宿主侧无需新增端点；类型直接使用 dsh-mcp-client 的
+ * 传输名（`stdio` / `streamable-http`），不暴露 http / sse 等下游别名。
+ * `${VAR}` 占位在全局 patch 里转成 `!!js`、项目挂载时解析 process.env。
  */
 import React from 'react';
 interface Props {

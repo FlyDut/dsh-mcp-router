@@ -2,15 +2,15 @@
  * 双语字典：zh/en 真双语（不互为别名），语言跟随 DSH 界面设置。
  *
  * 术语约定（四档）：
- * - native     原生注入：工具清单直接进上下文（DSH 原生方式）
+ * - native     全部：工具清单直接进上下文（DSH 原生方式）
  * - name-only  仅名称：只暴露服务器名，工具经 dsh_mcp_call 按需调用
  * - hidden     隐藏：完全不进上下文，可 dsh_mcp_search 检索、dsh_mcp_call 按需调用
  * - off        关闭：不可见、不可搜索、不可调用
  */
-export const NS = 'mcp-panel'
+export const NS = 'dsh-mcp-router'
 
 export const en: Record<string, string> = {
-  'mp.nav': 'MCP Manager',
+  'mp.nav': 'MCP Router',
   'mp.refresh': 'Refresh',
   'mp.loading': 'Loading…',
   'mp.empty': 'No MCP servers found.',
@@ -95,23 +95,26 @@ export const en: Record<string, string> = {
   'mp.toolBulkIgnored': '; {n} named tool(s) are not in the current directory and were ignored',
   // toolbar buttons (brief labels; full wording lives in the tooltips)
   'mp.addBtn': 'Add',
-  'mp.addBtnHint': 'Add an MCP server by pasting mcpServers JSON (global or project target)',
+  'mp.addBtnHint': 'Add an MCP server by filling in its connection details (global or project target)',
   'mp.importBtn': 'Import',
   'mp.importBtnHint': "Scan this machine's other agent configs (opencode / zcode / Claude Code / Cursor / Gemini CLI / project .mcp.json) and import selected servers",
   'mp.refreshHint': 'Reload the panel data',
-  // add MCP (quick migration)
+  // add MCP (form)
   'mp.addMcp': 'Add MCP',
-  'mp.addMcpPasteHint': 'Paste mcpServers JSON from another harness (e.g. Claude Code .mcp.json), then preview and confirm.',
+  'mp.addMcpFormHint': 'Fill in how to reach the server; the config preview below updates live.',
+  'mp.addMcpType': 'Type',
+  'mp.addMcpTitleLabel': 'MCP title (unique)',
+  'mp.addMcpHeadersOptional': 'Headers (optional)',
+  'mp.addMcpPreviewTitle': 'Config preview',
+  'mp.addMcpNameInvalid': 'Name must match [A-Za-z0-9_-]{1,32}',
+  'mp.addMcpCommandRequired': 'A command is required for stdio',
+  'mp.addMcpUrlRequired': 'A URL is required for streamable-http',
   'mp.addMcpTarget': 'Target',
   'mp.addMcpTargetGlobal': 'Global',
   'mp.addMcpTargetProject': 'Project',
   'mp.addMcpNoWorkspace': 'No session workspace — cannot add project MCP.',
-  'mp.addMcpPreview': 'Preview',
-  'mp.addMcpPreviewNames': 'Parsed',
   'mp.addMcpConfirm': 'Add',
   'mp.addMcpCancel': 'Close',
-  'mp.addMcpSuccess': 'Added {n} {target} MCP(s).',
-  'mp.addMcpSkipped': 'Skipped {n} (existing/failed): {names}',
   'mp.addMcpError': 'Failed: {error}',
   // edit / remove
   'mp.edit': 'Edit',
@@ -163,14 +166,14 @@ export const en: Record<string, string> = {
 }
 
 export const zh: Record<string, string> = {
-  'mp.nav': 'MCP',
+  'mp.nav': 'MCP路由',
   'mp.refresh': '刷新',
   'mp.loading': '加载中…',
   'mp.empty': '未发现 MCP 服务器',
   'mp.session': '会话',
   'mp.preset': '预设',
   'mp.working': '处理中…',
-  'mp.toggleError': '操作失败：{error}',
+  'mp.toggleError': '全部：{error}',
   // 统计
   'mp.statServers': '个服务器',
   'mp.statNative': '个原生注入',
@@ -178,7 +181,7 @@ export const zh: Record<string, string> = {
   'mp.statHidden': '个隐藏/关闭',
   'mp.statTools': '{n} 个工具',
   'mp.statTokens': '约 token',
-  // 中间层 + 生效时机
+  // 中间层 + 生效时机全部
   'mp.middleLayerTitle': 'AI 中间层',
   'mp.middleLayerDesc':
     'dsh_mcp_search 与 dsh_mcp_call 常驻。未设为「原生注入」的服务器不进工具清单，需要时按需调用：dsh_mcp_call 会临时启用被隐藏的服务器、调用、再按空闲窗口回收。这条路径不改变模型可见的工具集，因此不会造成前缀缓存失效。',
@@ -202,7 +205,7 @@ export const zh: Record<string, string> = {
   'mp.statusFailed': '未运行',
   'mp.unregisteredBadge': '未注册',
   'mp.unregisteredHint':
-    '进程在跑，但一个工具都没注册上——工具数按 0 显示（不再用目录快照回填）。请查看该 server 日志或重启它。',
+    '进程在跑，但一个工具都没注册上——工具全部 显示（不再用目录快照回填）。请查看该 server 日志或重启它。',
   // 四档
   'mp.exposureTitle': '曝光档位',
   'mp.exposureNative': '原生注入',
@@ -247,23 +250,26 @@ export const zh: Record<string, string> = {
   'mp.toolBulkIgnored': '；另有 {n} 项不在当前工具目录中，已忽略',
   // 顶部按钮（文字简短，完整说明在悬停提示里）
   'mp.addBtn': '添加',
-  'mp.addBtnHint': '粘贴 mcpServers JSON 添加一个 MCP（可选全局或项目目标）',
+  'mp.addBtnHint': '填写连接方式添加一个 MCP（可选全局或项目目标）',
   'mp.importBtn': '导入',
   'mp.importBtnHint': '扫描本机其它 agent 的配置（opencode / zcode / Claude Code / Cursor / Gemini CLI / 项目 .mcp.json），勾选后导入',
   'mp.refreshHint': '重新拉取面板数据',
-  // 添加 MCP（快速迁移）
+  // 添加 MCP（表单）
   'mp.addMcp': '添加 MCP',
-  'mp.addMcpPasteHint': '粘贴其它 harness 的 mcpServers JSON（如 Claude Code 的 .mcp.json），转换预览后确认添加。',
+  'mp.addMcpFormHint': '填写服务器的连接方式，下方「配置预览」会实时更新。',
+  'mp.addMcpType': '类型',
+  'mp.addMcpTitleLabel': 'MCP 标题（唯一）',
+  'mp.addMcpHeadersOptional': '请求头（可选）',
+  'mp.addMcpPreviewTitle': '配置预览',
+  'mp.addMcpNameInvalid': '名称需匹配 [A-Za-z0-9_-]{1,32}',
+  'mp.addMcpCommandRequired': 'stdio 类型需要填写命令',
+  'mp.addMcpUrlRequired': 'streamable-http 类型需要填写 URL',
   'mp.addMcpTarget': '目标',
   'mp.addMcpTargetGlobal': '全局',
   'mp.addMcpTargetProject': '项目',
   'mp.addMcpNoWorkspace': '无会话工作空间，无法添加项目 MCP。',
-  'mp.addMcpPreview': '转换预览',
-  'mp.addMcpPreviewNames': '解析到',
   'mp.addMcpConfirm': '确认添加',
   'mp.addMcpCancel': '关闭',
-  'mp.addMcpSuccess': '已添加 {n} 个{target} MCP。',
-  'mp.addMcpSkipped': '跳过 {n} 个（已存在/失败）：{names}',
   'mp.addMcpError': '操作失败：{error}',
   // 编辑 / 删除
   'mp.edit': '编辑',

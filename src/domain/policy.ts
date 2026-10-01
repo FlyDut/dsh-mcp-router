@@ -242,12 +242,12 @@ export function createPolicyStore(options: PolicyStoreOptions): PolicyStore {
             await mkdir(stateDir(), { recursive: true })
             await writeFile(`${stateDir()}/state.v1.json`, raw, { encoding: 'utf8', mode: 0o600 })
           } catch (error) {
-            ctx.logger.warn?.(`mcp-panel: state v1 backup failed: ${messageOf(error)}`)
+            ctx.logger.warn?.(`dsh-mcp-router: state v1 backup failed: ${messageOf(error)}`)
           }
           loadFromState(state)
           migrated = await migrate(state)
           await writeState(toState(state))
-          ctx.logger.info?.(`mcp-panel: migrated ${migrated} state entr(ies) to v${STATE_VERSION}`)
+          ctx.logger.info?.(`dsh-mcp-router: migrated ${migrated} state entr(ies) to v${STATE_VERSION}`)
         } else {
           loadFromState(state)
           if (version !== STATE_VERSION) {
@@ -261,7 +261,7 @@ export function createPolicyStore(options: PolicyStoreOptions): PolicyStore {
       } catch (error) {
         lastError = messageOf(error)
         loaded = true
-        ctx.logger.warn?.(`mcp-panel: policy load failed: ${lastError}`)
+        ctx.logger.warn?.(`dsh-mcp-router: policy load failed: ${lastError}`)
       }
     },
 
@@ -328,7 +328,7 @@ export function createPolicyStore(options: PolicyStoreOptions): PolicyStore {
         try {
           await options.onEffectiveChanged?.(changes)
         } catch (error) {
-          ctx.logger.warn?.(`mcp-panel: apply process state failed: ${messageOf(error)}`)
+          ctx.logger.warn?.(`dsh-mcp-router: apply process state failed: ${messageOf(error)}`)
         }
       }
       return { applied: immediate, policy: entry }
@@ -344,7 +344,7 @@ export function createPolicyStore(options: PolicyStoreOptions): PolicyStore {
       try {
         await options.onEffectiveChanged?.(changes)
       } catch (error) {
-        ctx.logger.warn?.(`mcp-panel: apply process state failed: ${messageOf(error)}`)
+        ctx.logger.warn?.(`dsh-mcp-router: apply process state failed: ${messageOf(error)}`)
       }
       return changes.length
     },

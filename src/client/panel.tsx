@@ -7,12 +7,14 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { McpRow, McpToolInfo, McpView, PresetListView, PresetOption } from '../shared-types'
+import { authHeaders } from './auth'
 import { AddMcpModal } from './add-mcp'
 import { describeError, readJson } from './http'
 import { EditMcpModal } from './edit-mcp'
 import { ImportMcpModal } from './import-mcp'
 import { ServerCard, TOOL_BULK_KEY } from './server-card'
 import { readCurrentSession, withSessionParam, type SessionHookProps } from './session-param'
+import { error as errorStyle, modal as modalFactory, overlay as overlayStyle, tab as tabBase } from './ui'
 
 interface Props extends SessionHookProps {
   /** 由 locale 插槽注入：NS 字典的翻译函数 */
@@ -68,27 +70,9 @@ const C = {
   cardTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' as const },
   cardTitle: { margin: 0, fontSize: 14, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' },
   cardDesc: { margin: 0, fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: '18px' },
-  toggle: (active: boolean): React.CSSProperties => ({
-    font: 'inherit',
-    cursor: 'pointer',
-    border: '1px solid',
-    borderRadius: 6,
-    padding: '4px 12px',
-    fontSize: 12,
-    fontWeight: active ? 600 : 400,
-    color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-tertiary)',
-    background: active ? 'color-mix(in srgb, var(--dsw-alias-state-info-primary, #4a90d9) 16%, transparent)' : 'transparent',
-    borderColor: active ? 'var(--dsw-alias-state-info-primary, #4a90d9)' : 'var(--dsw-alias-border-l2)',
-  }),
+  toggle: (active: boolean): React.CSSProperties => tabBase(active, 12),
   hint: { margin: 0, fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' },
-  error: {
-    fontSize: 12,
-    color: 'var(--dsw-alias-label-primary)',
-    background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent)',
-    borderLeft: '3px solid var(--dsw-alias-state-error-primary)',
-    borderRadius: 6,
-    padding: '8px 10px',
-  },
+  error: errorStyle,
   empty: { fontSize: 13, color: 'var(--dsw-alias-label-tertiary)', padding: '16px 0', textAlign: 'center' as const },
   warn: {
     display: 'flex',
@@ -122,39 +106,9 @@ const C = {
   },
 }
 
-/** 删除二次确认框样式（轻量内联，不引入额外组件）。 */
-const confirmOverlay: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  background: 'rgba(0, 0, 0, 0.45)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  zIndex: 1000,
-}
-const confirmModal: React.CSSProperties = {
-  width: 'min(480px, calc(100vw - 48px))',
-  background: 'var(--dsw-alias-bg-layer-1)',
-  border: '1px solid var(--dsw-alias-border-l2)',
-  borderRadius: 10,
-  padding: '16px 18px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-  boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
-}
-
-/** 进程级随机令牌缓存（token 全程不变，复用免重复请求）。 */
-let tokenPromise: Promise<string | null> | null = null
-function ensureToken(): Promise<string | null> {
-  if (!tokenPromise) {
-    tokenPromise = fetch('/api/mcp-panel/token')
-      .then((r) => r.json() as Promise<{ token?: string }>)
-      .then((b) => b?.token ?? null)
-      .catch(() => null)
-  }
-  return tokenPromise
-}
+/** 删除二次确认框样式（轻量内联，复用共享 overlay/modal）。 */
+const confirmOverlay = overlayStyle
+const confirmModal = modalFactory(480, 8)
 
 function formatK(n: number): string {
   return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') : String(n)
@@ -192,7 +146,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
   const load = useCallback(() => {
     const current = ++seq.current
     setError(null)
-    fetch(withSessionParam('/api/mcp-panel/state', session))
+    fetch(withSessionParam('/api/dsh-mcp-router/state', session))
       .then((res) => readJson<{ ok: boolean; state?: McpView; error?: string }>(res))
       .then((body) => {
         if (!body.ok || !body.state) throw new Error(body.error ?? 'bad response')
@@ -205,7 +159,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
   }, [t, session])
 
   const loadPresets = useCallback(() => {
-    fetch(withSessionParam('/api/mcp-panel/presets', session))
+    fetch(withSessionParam('/api/dsh-mcp-router/presets', session))
       .then((res) => readJson<{ ok: boolean } & Partial<PresetListView>>(res))
       .then((body) => {
         if (!body.ok) return
@@ -221,7 +175,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
   useEffect(() => {
     load()
     loadPresets()
-    fetch('/api/mcp-panel/config')
+    fetch('/api/dsh-mcp-router/config')
       .then((r) => readJson<{ ok: boolean; applyMode?: ApplyMode; defaultExposure?: string }>(r))
       .then((b) => {
         if (b.ok && b.applyMode) setApplyMode(b.applyMode)
@@ -262,11 +216,9 @@ export function McpPanelSection(props: Props): React.ReactElement {
       return next
     })
     setError(null)
-    const token = await ensureToken()
-    const headers: Record<string, string> = { 'content-type': 'application/json' }
-    if (token) headers['x-panel-token'] = token
+    const headers = await authHeaders()
     try {
-      const res = await fetch('/api/mcp-panel/policy', {
+      const res = await fetch('/api/dsh-mcp-router/policy', {
         method: 'POST',
         headers,
         body: JSON.stringify({ updates: merged }),
@@ -317,11 +269,9 @@ export function McpPanelSection(props: Props): React.ReactElement {
       const key = `${row.entryId}:${tool.name}`
       setToolBusy((prev) => ({ ...prev, [key]: true }))
       setError(null)
-      const token = await ensureToken()
-      const headers: Record<string, string> = { 'content-type': 'application/json' }
-      if (token) headers['x-panel-token'] = token
+      const headers = await authHeaders()
       try {
-        const res = await fetch('/api/mcp-panel/mcp/toolToggle', {
+        const res = await fetch('/api/dsh-mcp-router/mcp/toolToggle', {
           method: 'POST',
           headers,
           body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace, toolName: tool.name, disabled: !tool.disabled }),
@@ -351,11 +301,9 @@ export function McpPanelSection(props: Props): React.ReactElement {
       const key = `${row.entryId}:${TOOL_BULK_KEY}`
       setToolBusy((prev) => ({ ...prev, [key]: true }))
       setError(null)
-      const token = await ensureToken()
-      const headers: Record<string, string> = { 'content-type': 'application/json' }
-      if (token) headers['x-panel-token'] = token
+      const headers = await authHeaders()
       try {
-        const res = await fetch('/api/mcp-panel/mcp/toolBulk', {
+        const res = await fetch('/api/dsh-mcp-router/mcp/toolBulk', {
           method: 'POST',
           headers,
           body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace, disabled, toolNames }),
@@ -385,11 +333,9 @@ export function McpPanelSection(props: Props): React.ReactElement {
     async (mode: ApplyMode) => {
       if (mode === applyMode) return
       setBusy((prev) => ({ ...prev, applyMode: true }))
-      const token = await ensureToken()
-      const headers: Record<string, string> = { 'content-type': 'application/json' }
-      if (token) headers['x-panel-token'] = token
+      const headers = await authHeaders()
       try {
-        const res = await fetch('/api/mcp-panel/config', { method: 'POST', headers, body: JSON.stringify({ applyMode: mode }) })
+        const res = await fetch('/api/dsh-mcp-router/config', { method: 'POST', headers, body: JSON.stringify({ applyMode: mode }) })
         const body = await readJson<{ ok: boolean; applyMode?: ApplyMode; error?: string }>(res)
         if (!body.ok) throw new Error(body.error ?? 'config update failed')
         setApplyMode(body.applyMode ?? mode)
@@ -408,11 +354,9 @@ export function McpPanelSection(props: Props): React.ReactElement {
     if (typeof window !== 'undefined' && !window.confirm(t('mp.commitConfirm'))) return
     showWarn(t('mp.cacheWarn'), true)
     setBusy((prev) => ({ ...prev, commit: true }))
-    const token = await ensureToken()
-    const headers: Record<string, string> = { 'content-type': 'application/json' }
-    if (token) headers['x-panel-token'] = token
+    const headers = await authHeaders()
     try {
-      const res = await fetch('/api/mcp-panel/policy/commit', {
+      const res = await fetch('/api/dsh-mcp-router/policy/commit', {
         method: 'POST',
         headers,
         body: JSON.stringify({ confirm: true }),
@@ -434,10 +378,8 @@ export function McpPanelSection(props: Props): React.ReactElement {
     setRemovingBusy(true)
     setError(null)
     try {
-      const token = await ensureToken()
-      const headers: Record<string, string> = { 'content-type': 'application/json' }
-      if (token) headers['x-panel-token'] = token
-      const res = await fetch('/api/mcp-panel/mcp/remove', {
+      const headers = await authHeaders()
+      const res = await fetch('/api/dsh-mcp-router/mcp/remove', {
         method: 'POST',
         headers,
         body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace }),
@@ -451,7 +393,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
     } finally {
       setRemovingBusy(false)
     }
-  }, [ensureToken, load, removing, t])
+  }, [load, removing, t])
 
   const hasPending = Boolean(view?.mcp.some((row) => row.pending))
 

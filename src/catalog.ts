@@ -2,7 +2,7 @@
  * 私有 MCP catalog —— 采集 / 检索 / 持久化（P1）。
  *
  * 纯逻辑模块：不依赖 Cordis 运行时（仅类型），持久化函数显式接收目录，
- * 这样既能在插件 apply 里对 ~/.dsh/dsh-mcp-panel 使用，也能被
+ * 这样既能在插件 apply 里对 ~/.dsh/dsh-mcp-router 使用，也能被
  * scripts/selftest-mcp.mjs 用临时目录做往返自测。
  *
  * 数据形状：

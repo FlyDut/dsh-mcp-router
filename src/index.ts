@@ -1,5 +1,5 @@
 /**
- * dsh-mcp-skill-panel — Host 半区入口（接线层）。
+ * dsh-mcp-router — Host 半区入口（接线层）。
  *
  * 插件唯一职责：**决定每个 MCP 服务器对哪个会话以什么粒度可见，并在不可见时按需调用它**。
  * 本文件只做组装与生命周期，各层职责见：
@@ -76,7 +76,7 @@ export { describeServer, removeServer, resolveWritableTarget, updateServer } fro
 // 领域纯逻辑再导出（端到端验证与外部复用；独立构建入口见 lib/exposure.js）
 export { decideExposure, desiredRunning, presetAllows, isExposure } from './domain/exposure'
 
-export const name = 'mcp-panel'
+export const name = 'dsh-mcp-router'
 
 export const inject = ['tools', 'agents', 'agentPresets', 'loader', 'systemPrompt', 'timer']
 
@@ -166,7 +166,7 @@ async function persistCatalog(next: () => Context, runtime: CatalogRuntime): Pro
     runtime.dirty = false
     runtime.lastPersistAt = Date.now()
   } catch (error) {
-    ctx.logger.warn(`mcp-panel: catalog persist failed: ${messageOf(error)}`)
+    ctx.logger.warn(`dsh-mcp-router: catalog persist failed: ${messageOf(error)}`)
   } finally {
     runtime.persisting = false
     if (runtime.dirty) void persistCatalog(next, runtime)
@@ -310,7 +310,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   // 注册表：三种来源归一（loader 行同步、preset standing 行异步刷新）
   const registry: Registry = createRegistry(ctx, () => caches.invalidateMcp())
-  ctx.effect(() => registry.install(), 'mcp-panel: registry events')
+  ctx.effect(() => registry.install(), 'dsh-mcp-router: registry events')
 
   // 策略层：意图/生效两份表 + state.json 持久化 + 启动迁移。
   // onEffectiveChanged：immediate 模式下把「期望运行」同步到 loader（预设行只能等重启物化）。
@@ -331,7 +331,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   // 启动早期：重建项目 MCP owner 映射（HMR/热重载后内存表清空）
   void rebuildOwnersFromState(ctx).catch((error: unknown) => {
-    ctx.logger.warn(`mcp-panel: 重建项目 MCP owner 映射失败: ${messageOf(error)}`)
+    ctx.logger.warn(`dsh-mcp-router: 重建项目 MCP owner 映射失败: ${messageOf(error)}`)
   })
 
   // 启动早期：加载持久化 catalog（last-good 兜底）；失败置空不阻塞。
@@ -356,13 +356,13 @@ export function apply(ctx: Context, config: Config = {}): void {
     await policy.load()
     try {
       const count = await syncPresetFiles({ ctx, registry, policy })
-      if (count > 0) ctx.logger.info(`mcp-panel: materialized ${count} MCP row state(s) into preset composition`)
+      if (count > 0) ctx.logger.info(`dsh-mcp-router: materialized ${count} MCP row state(s) into preset composition`)
     } catch (error) {
-      ctx.logger.warn(`mcp-panel: preset sync skipped: ${messageOf(error)}`)
+      ctx.logger.warn(`dsh-mcp-router: preset sync skipped: ${messageOf(error)}`)
     }
     await registry.refreshNow()
   })().catch((error: unknown) => {
-    ctx.logger.warn(`mcp-panel: startup sequence failed: ${messageOf(error)}`)
+    ctx.logger.warn(`dsh-mcp-router: startup sequence failed: ${messageOf(error)}`)
   })
 
   // 装配层（常开）：唯一注入点 = 工具过滤 + 仅名称索引段
@@ -372,11 +372,11 @@ export function apply(ctx: Context, config: Config = {}): void {
     isAiActive: (serverName) => controller.isAiEnabled(serverName),
     summaryOf: (serverName) => summaryOf(serverName, config, catalogRuntime),
   })
-  ctx.effect(() => disposeAssembly, 'mcp-panel: assembly teardown')
+  ctx.effect(() => disposeAssembly, 'dsh-mcp-router: assembly teardown')
 
   // 项目级（工作空间）MCP：.dsh/mcps/**/mcp.json → 惰性挂载（可见性由装配层按档位+工作区统一判定）
   const disposeProjectMcp = installProjectMcp(ctx, policy)
-  ctx.effect(() => disposeProjectMcp, 'mcp-panel: project mcp teardown')
+  ctx.effect(() => disposeProjectMcp, 'dsh-mcp-router: project mcp teardown')
 
   // 中间层工具（dsh_mcp_search / dsh_mcp_call）+ 空闲回收器
   if (config.middleLayer !== false) {
@@ -387,7 +387,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         offReaper()
         disposeTools()
       },
-      'mcp-panel: middle layer teardown',
+      'dsh-mcp-router: middle layer teardown',
     )
   }
 
@@ -414,7 +414,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       offTools()
       offLoader()
     }
-  }, 'mcp-panel: catalog snapshot + registry refresh')
+  }, 'dsh-mcp-router: catalog snapshot + registry refresh')
 
   // 初始快照（可能还没有 agent，mcp__* 会在后续增量补全）
   void snapshotEnabled(ctx, catalogRuntime, caches, registry).catch(() => {})
@@ -433,11 +433,11 @@ export function apply(ctx: Context, config: Config = {}): void {
           await registry.refreshNow()
           if (applied > 0) {
             caches.invalidateMcp()
-            ctx.logger.info(`mcp-panel: applied ${applied} pending MCP change(s) at session boundary`)
+            ctx.logger.info(`dsh-mcp-router: applied ${applied} pending MCP change(s) at session boundary`)
           }
         })()
           .catch((error: unknown) => {
-            ctx.logger.warn(`mcp-panel: session-boundary apply failed: ${messageOf(error)}`)
+            ctx.logger.warn(`dsh-mcp-router: session-boundary apply failed: ${messageOf(error)}`)
           })
           .finally(() => {
             guard = false
@@ -445,7 +445,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       })
       return off
     },
-    'mcp-panel: session-boundary apply',
+    'dsh-mcp-router: session-boundary apply',
   )
 
   ctx.inject(['webServer'], (httpCtx) => {
@@ -465,7 +465,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       return () => {
         for (const dispose of disposers) dispose()
       }
-    }, 'mcp-panel: routes')
+    }, 'dsh-mcp-router: routes')
   })
 }
 
@@ -579,9 +579,9 @@ async function applyProcessState(
       if (!entry || !isMcpEntry(entry)) continue
       if (Boolean(entry.disabled) === wantDisabled) continue
       await entry.update({ disabled: wantDisabled })
-      ctx.logger.info?.(`mcp-panel: ${change.serverName} → ${want ? 'enabled' : 'disabled'} (exposure=${change.policy.exposure})`)
+      ctx.logger.info?.(`dsh-mcp-router: ${change.serverName} → ${want ? 'enabled' : 'disabled'} (exposure=${change.policy.exposure})`)
     } catch (error) {
-      ctx.logger.debug?.(`mcp-panel: process state for "${change.serverName}" not applied (${messageOf(error)})`)
+      ctx.logger.debug?.(`dsh-mcp-router: process state for "${change.serverName}" not applied (${messageOf(error)})`)
     }
   }
 }

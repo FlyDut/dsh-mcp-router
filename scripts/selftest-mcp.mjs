@@ -164,13 +164,13 @@ check('searchCatalog 空 query 返回空；limit 被尊重', () => {
 // ── 会话透传（移植上游 74ed18e）───────────────────────────────────────
 
 check('withSessionParam：有会话才追加；拿不到会话时 URL 与旧版逐字节相同', () => {
-  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', 'abc'), '/api/mcp-panel/state?session=abc')
-  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state?x=1', 'abc'), '/api/mcp-panel/state?x=1&session=abc')
-  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', 'a b&c'), '/api/mcp-panel/state?session=a%20b%26c')
+  assert.equal(sessionParam.withSessionParam('/api/dsh-mcp-router/state', 'abc'), '/api/dsh-mcp-router/state?session=abc')
+  assert.equal(sessionParam.withSessionParam('/api/dsh-mcp-router/state?x=1', 'abc'), '/api/dsh-mcp-router/state?x=1&session=abc')
+  assert.equal(sessionParam.withSessionParam('/api/dsh-mcp-router/state', 'a b&c'), '/api/dsh-mcp-router/state?session=a%20b%26c')
   // 降级路径必须与旧请求完全一致（可独立 revert）
-  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', undefined), '/api/mcp-panel/state')
-  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', ''), '/api/mcp-panel/state')
-  assert.equal(sessionParam.withSessionParam('/api/mcp-panel/state', null), '/api/mcp-panel/state')
+  assert.equal(sessionParam.withSessionParam('/api/dsh-mcp-router/state', undefined), '/api/dsh-mcp-router/state')
+  assert.equal(sessionParam.withSessionParam('/api/dsh-mcp-router/state', ''), '/api/dsh-mcp-router/state')
+  assert.equal(sessionParam.withSessionParam('/api/dsh-mcp-router/state', null), '/api/dsh-mcp-router/state')
 })
 
 check('readCurrentSession：无 hook / hook 抛错 / 非字符串 一律降级 undefined', () => {

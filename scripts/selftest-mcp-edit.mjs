@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // HOME 必须在 import 构建产物之前改（state.ts 在模块加载时求值目录）
-const fakeHome = mkdtempSync(join(tmpdir(), 'mcp-panel-edit-'))
+const fakeHome = mkdtempSync(join(tmpdir(), 'dsh-mcp-router-edit-'))
 process.env.HOME = fakeHome
 process.env.USERPROFILE = fakeHome
 
@@ -398,14 +398,23 @@ async function withHttpServer(handler) {
   const server = createServer(handler)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const port = server.address().port
-  return { port, close: () => new Promise((resolve) => server.close(resolve)) }
+  // close() 只停新连接，会一直等空闲连接；先主动断开再 close，否则 keep-alive 客户端让进程永不退出
+  return {
+    port,
+    close: () =>
+      new Promise((resolve) => {
+        server.closeAllConnections()
+        server.close(resolve)
+      }),
+  }
 }
 
 async function postChunks(port, chunks) {
   const { request } = await import('node:http')
   return await new Promise((resolve, reject) => {
     const req = request(
-      { host: '127.0.0.1', port, method: 'POST', path: '/', headers: { 'content-length': chunks.reduce((n, c) => n + c.length, 0) } },
+      // agent:false 走一次性连接，避免 globalAgent 的 keep-alive 空闲 socket 把进程挂住
+      { host: '127.0.0.1', port, method: 'POST', path: '/', agent: false, headers: { 'content-length': chunks.reduce((n, c) => n + c.length, 0) } },
       (res) => {
         let raw = ''
         res.setEncoding('utf8')
@@ -470,3 +479,8 @@ await checkAsync('readBody：超限返回可读错误（不 destroy socket，客
 rmSync(fakeHome, { recursive: true, force: true })
 if (failed) process.exit(1)
 console.log('\nselftest-mcp-edit: all checks passed')
+// 项目行 updateServer/removeServer 的成功路径会触发 remountWorkspace →
+// ensureWorkspace，留下常驻 FSWatcher（宿主环境的设计：项目 MCP 热更新）。
+// 本 selftest 是短命进程，没有宿主生命周期来停 watcher，故显式退出，
+// 避免 _getActiveHandles 挂住事件循环、卡死 package.json 的 selftest 串联链。
+process.exit(0)

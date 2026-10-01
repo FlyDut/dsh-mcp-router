@@ -9,7 +9,7 @@
  *            （项目级 MCP 额外要求会话工作空间匹配）
  * ```
  *
- * - `native`    → 该 server 的 `mcp__<s>__*` 工具全部保留（DSH 原生注入）
+ * - `native`    → 该 server 的 `mcp__<s>__*` 工具全部保留（DSH 全部）
  * - `name-only` → 工具全部过滤，但 server 名与摘要进入「服务器索引段」
  * - `hidden`    → 工具过滤，索引段不出现（仅 dsh_mcp_search 可检索、dsh_mcp_call 可调用）
  * - `off`       → 工具过滤，索引段不出现，dsh_mcp_call 拒绝
@@ -26,7 +26,7 @@ import { agentPresetId, agentWorkspace, sameWorkspace } from './session-scope'
 import { serverOfMcp } from '../catalog'
 
 /** name-only 索引段的段名（唯一，避免与其它插件冲突）。 */
-export const SERVER_INDEX_SECTION = 'mcp-panel:server-index'
+export const SERVER_INDEX_SECTION = 'dsh-mcp-router:server-index'
 /** 索引段在工具区之后的偏移（`TOOLS_SDK` 顺序号 + 10）。 */
 const SERVER_INDEX_ORDER_OFFSET = 10
 /** 单个 server 摘要的最大长度（索引段 token 控制）。 */
@@ -173,7 +173,7 @@ export function installAssembly(ctx: Context, depsRaw: Omit<AssemblyDeps, 'ctxFo
         },
       )
       return off
-    }, 'mcp-panel: assembly filter'),
+    }, 'dsh-mcp-router: assembly filter'),
   )
 
   disposers.push(
@@ -184,7 +184,7 @@ export function installAssembly(ctx: Context, depsRaw: Omit<AssemblyDeps, 'ctxFo
           order: ctx.systemPrompt.getSectionOrder('TOOLS_SDK') + SERVER_INDEX_ORDER_OFFSET,
           text: (context) => renderServerIndex(deps, planFor(context as { agent?: unknown } | undefined)),
         }),
-      'mcp-panel: server index section',
+      'dsh-mcp-router: server index section',
     ),
   )
 

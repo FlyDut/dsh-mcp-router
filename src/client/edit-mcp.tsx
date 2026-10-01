@@ -5,9 +5,25 @@
  * - 只读行：预设组合行（`agent.cordis.yml`）——本组件不会打开（卡片按钮已禁用）
  * - 含 `!!js` 动态表达式的字段：以只读形式列出，保存时原样保留、绝不固化成明文
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import type { McpRow } from '../shared-types'
+import { authHeaders } from './auth'
 import { describeError, readJson } from './http'
+import {
+  action,
+  disabled as disabledStyle,
+  error,
+  footer,
+  hintBlock,
+  label,
+  modal,
+  monoInput,
+  overlay,
+  primary,
+  row,
+  tab,
+  title,
+} from './ui'
 
 interface Props {
   t: (key: string, params?: Record<string, string | number>) => string
@@ -36,86 +52,21 @@ interface Detail {
   readonly?: string
 }
 
+/** 样式薄别名层：共享件来自 ui.ts；field/dynamic 为本弹窗特有。 */
 const C = {
-  overlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    background: 'rgba(0, 0, 0, 0.45)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  },
-  modal: {
-    width: 'min(680px, calc(100vw - 48px))',
-    maxHeight: 'calc(100vh - 80px)',
-    overflowY: 'auto' as const,
-    background: 'var(--dsw-alias-bg-layer-1)',
-    border: '1px solid var(--dsw-alias-border-l2)',
-    borderRadius: 10,
-    padding: '16px 18px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 10,
-    boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
-  },
-  title: { margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' },
-  hint: { margin: 0, fontSize: 11, color: 'var(--dsw-alias-label-tertiary)', lineHeight: '16px' },
+  overlay,
+  modal: modal(680, 10),
+  title,
+  hint: hintBlock,
   field: { display: 'flex', flexDirection: 'column' as const, gap: 3 },
-  label: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' },
-  input: {
-    font: 'inherit',
-    fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-    fontSize: 12,
-    lineHeight: '18px',
-    background: 'var(--dsw-alias-bg-layer-2)',
-    color: 'var(--dsw-alias-label-primary)',
-    border: '1px solid var(--dsw-alias-border-l2)',
-    borderRadius: 6,
-    padding: '6px 8px',
-  },
-  row: { display: 'flex', gap: 8, alignItems: 'center' },
-  tab: (active: boolean): React.CSSProperties => ({
-    font: 'inherit',
-    cursor: 'pointer',
-    border: '1px solid',
-    borderRadius: 6,
-    padding: '4px 14px',
-    fontSize: 12,
-    fontWeight: active ? 600 : 400,
-    color: active ? 'var(--dsw-alias-label-primary)' : 'var(--dsw-alias-label-tertiary)',
-    background: active ? 'color-mix(in srgb, var(--dsw-alias-state-info-primary, #4a90d9) 16%, transparent)' : 'transparent',
-    borderColor: active ? 'var(--dsw-alias-state-info-primary, #4a90d9)' : 'var(--dsw-alias-border-l2)',
-  }),
-  action: {
-    font: 'inherit',
-    cursor: 'pointer',
-    border: '1px solid var(--dsw-alias-border-l2)',
-    background: 'var(--dsw-alias-bg-layer-1)',
-    color: 'var(--dsw-alias-label-secondary)',
-    borderRadius: 6,
-    padding: '5px 14px',
-    fontSize: 12,
-  },
-  primary: {
-    font: 'inherit',
-    cursor: 'pointer',
-    border: 0,
-    borderRadius: 6,
-    padding: '5px 16px',
-    fontSize: 12,
-    color: 'var(--dsw-alias-label-inverse, #fff)',
-    background: 'var(--dsw-alias-state-success-primary)',
-  },
-  disabled: { opacity: 0.55, cursor: 'progress' } as React.CSSProperties,
-  error: {
-    fontSize: 12,
-    color: 'var(--dsw-alias-label-primary)',
-    background: 'color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent)',
-    borderLeft: '3px solid var(--dsw-alias-state-error-primary)',
-    borderRadius: 6,
-    padding: '8px 10px',
-  },
+  label,
+  input: monoInput(),
+  row: row(),
+  tab,
+  action,
+  primary,
+  disabled: disabledStyle,
+  error,
   dynamic: {
     fontSize: 11,
     color: 'var(--dsw-alias-label-tertiary)',
@@ -126,7 +77,7 @@ const C = {
     fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
     whiteSpace: 'pre-wrap' as const,
   },
-  footer: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 },
+  footer: footer({ marginTop: 4 }),
 }
 
 /** 多行文本 → 字符串数组（去空行）。 */
@@ -172,21 +123,10 @@ export function EditMcpModal(props: Props): React.ReactElement {
   const [headersText, setHeadersText] = useState('')
   const [timeoutText, setTimeoutText] = useState('')
 
-  const tokenPromise = useRef<Promise<string | null> | null>(null)
-  const ensureToken = useCallback(() => {
-    if (!tokenPromise.current) {
-      tokenPromise.current = fetch('/api/mcp-panel/token')
-        .then((r) => r.json() as Promise<{ token?: string }>)
-        .then((b) => b?.token ?? null)
-        .catch(() => null)
-    }
-    return tokenPromise.current
-  }, [])
-
   useEffect(() => {
     const query = new URLSearchParams({ serverName: row.serverName })
     if (row.workspace) query.set('workspace', row.workspace)
-    fetch(`/api/mcp-panel/mcp/detail?${query.toString()}`)
+    fetch(`/api/dsh-mcp-router/mcp/detail?${query.toString()}`)
       .then((res) => readJson<{ ok: boolean; error?: string } & Partial<Detail>>(res))
       .then((body) => {
         if (!body.ok) throw new Error(body.error ?? 'detail failed')
@@ -226,10 +166,8 @@ export function EditMcpModal(props: Props): React.ReactElement {
     }
     if (timeoutText.trim().length > 0 && Number.isFinite(timeout) && timeout > 0) patch.toolCallTimeoutMs = timeout
     try {
-      const token = await ensureToken()
-      const headers: Record<string, string> = { 'content-type': 'application/json' }
-      if (token) headers['x-panel-token'] = token
-      const res = await fetch('/api/mcp-panel/mcp/update', {
+      const headers = await authHeaders()
+      const res = await fetch('/api/dsh-mcp-router/mcp/update', {
         method: 'POST',
         headers,
         body: JSON.stringify({ serverName: row.serverName, workspace: row.workspace, patch }),
@@ -247,7 +185,6 @@ export function EditMcpModal(props: Props): React.ReactElement {
     argsText,
     command,
     cwd,
-    ensureToken,
     envDynamic,
     envText,
     headersDynamic,

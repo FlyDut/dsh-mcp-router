@@ -191,7 +191,7 @@ async function syncRows(ctx: Context, state: WorkspaceState, rows: McpRowConfig[
     try {
       await ctx.loader.remove(entryId)
     } catch (error) {
-      ctx.logger.warn?.(`mcp-panel: 卸载项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
+      ctx.logger.warn?.(`dsh-mcp-router: 卸载项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
     }
     state.entries.delete(serverName)
     projectOwners.delete(serverName)
@@ -206,7 +206,7 @@ async function syncRows(ctx: Context, state: WorkspaceState, rows: McpRowConfig[
           await ctx.loader.update(existingId, { ...row, disabled: wantDisabled })
         }
       } catch (error) {
-        ctx.logger.warn?.(`mcp-panel: 更新项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
+        ctx.logger.warn?.(`dsh-mcp-router: 更新项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
       }
       continue
     }
@@ -218,7 +218,7 @@ async function syncRows(ctx: Context, state: WorkspaceState, rows: McpRowConfig[
       state.entries.set(serverName, row.id)
       projectOwners.set(serverName, state.root)
     } catch (error) {
-      ctx.logger.warn?.(`mcp-panel: 挂载项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
+      ctx.logger.warn?.(`dsh-mcp-router: 挂载项目 MCP "${serverName}" 失败: ${messageOf(error)}`)
     }
   }
 }
@@ -250,7 +250,7 @@ async function ensureWorkspace(ctx: Context, root: string, policy: PolicyStore):
     await disposeWorkspace(ctx, root)
     return
   }
-  const servers = await scanWorkspaceMcp(root, (msg) => ctx.logger.warn?.(`mcp-panel: ${msg}`))
+  const servers = await scanWorkspaceMcp(root, (msg) => ctx.logger.warn?.(`dsh-mcp-router: ${msg}`))
   const rows = buildRows(root, servers)
   let state = workspaces.get(root)
   if (!state) {
@@ -267,12 +267,12 @@ async function ensureWorkspace(ctx: Context, root: string, policy: PolicyStore):
         state.refreshTimer = setTimeout(() => {
           state.refreshTimer = undefined
           void refresh(ctx, root, state!, policy).catch((error) => {
-            ctx.logger.warn?.(`mcp-panel: 项目 MCP 热更新失败（${root}）: ${messageOf(error)}`)
+            ctx.logger.warn?.(`dsh-mcp-router: 项目 MCP 热更新失败（${root}）: ${messageOf(error)}`)
           })
         }, RESCAN_DEBOUNCE_MS)
       })
     } catch (error) {
-      ctx.logger.warn?.(`mcp-panel: 无法监视 ${join(root, MCPS_DIR)}: ${messageOf(error)}`)
+      ctx.logger.warn?.(`dsh-mcp-router: 无法监视 ${join(root, MCPS_DIR)}: ${messageOf(error)}`)
     }
   }
 }
@@ -286,7 +286,7 @@ async function refresh(ctx: Context, root: string, state: WorkspaceState, policy
       await disposeWorkspace(ctx, root)
       return
     }
-    const servers = await scanWorkspaceMcp(root, (msg) => ctx.logger.warn?.(`mcp-panel: ${msg}`))
+    const servers = await scanWorkspaceMcp(root, (msg) => ctx.logger.warn?.(`dsh-mcp-router: ${msg}`))
     await syncRows(ctx, state, buildRows(root, servers), policy)
   } finally {
     state.refreshing = false
@@ -302,11 +302,11 @@ export function installProjectMcp(ctx: Context, policy: PolicyStore): () => void
         const cwd = payload?.agent?.session?.header?.cwd
         if (typeof cwd !== 'string' || cwd.length === 0) return
         void ensureWorkspace(ctx, cwd, policy).catch((error) => {
-          ctx.logger.warn?.(`mcp-panel: 项目 MCP 挂载失败（${cwd}）: ${messageOf(error)}`)
+          ctx.logger.warn?.(`dsh-mcp-router: 项目 MCP 挂载失败（${cwd}）: ${messageOf(error)}`)
         })
       })
       return off
-    }, 'mcp-panel: project mcp session hook'),
+    }, 'dsh-mcp-router: project mcp session hook'),
   )
   return () => {
     for (const dispose of disposers) dispose()

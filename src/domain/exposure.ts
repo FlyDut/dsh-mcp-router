@@ -62,7 +62,7 @@ export function isPresetMode(value: unknown): value is PresetMode {
   return typeof value === 'string' && (PRESET_MODES as readonly string[]).includes(value)
 }
 
-/** 构造默认策略（未配置过的 server 默认原生注入 = DSH 原本行为）。 */
+/** 构造默认策略（未配置过的 server 默认全部 = DSH 原本行为）。 */
 export function defaultPolicy(exposure: Exposure = 'native'): ServerPolicy {
   return { exposure, presets: { mode: 'all', ids: [] }, disabledTools: [] }
 }

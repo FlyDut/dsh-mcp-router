@@ -1,5 +1,5 @@
 /**
- * state.json 持久化（~/.dsh/dsh-mcp-panel/state.json）。
+ * state.json 持久化（~/.dsh/dsh-mcp-router/state.json）。
  *
  * v2 结构（当前）：
  * - `servers`  ：全局 MCP 的策略（曝光档位 + 预设关联 + 工具级禁用 + 物化账本）
@@ -18,9 +18,10 @@ import { join } from 'node:path'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import type { Exposure, PresetScope, ServerPolicy } from './domain/exposure'
 
-const STATE_DIR = join(homedir(), '.dsh', 'dsh-mcp-panel')
-/** 历史目录（0.6.0 之前叫 dsh-mcp-skill-panel、0.2.0 之前叫 dsh-runtime-inventory）。 */
+const STATE_DIR = join(homedir(), '.dsh', 'dsh-mcp-router')
+/** 历史目录（独立分叉前叫 dsh-mcp-panel；0.6.0 之前叫 dsh-mcp-skill-panel、0.2.0 之前叫 dsh-runtime-inventory）。 */
 const LEGACY_STATE_DIRS = [
+  join(homedir(), '.dsh', 'dsh-mcp-panel'),
   join(homedir(), '.dsh', 'dsh-mcp-skill-panel'),
   join(homedir(), '.dsh', 'dsh-runtime-inventory'),
 ]
@@ -154,7 +155,7 @@ export async function readState(): Promise<StateFile> {
     // 两种情况都落到这里：文件不存在（首次运行/迁移）或文件损坏。
     // 损坏时先备份原文件（state.corrupt.json），避免后续写盘把它彻底覆盖。
     await backupCorruptState()
-    // 历史目录迁移（0.6.0 改名）：旧目录有数据则整体搬过来（state.json + catalog.json）
+    // 历史目录迁移（改名时整体搬迁）：旧目录有数据则搬过来（state.json + catalog.json）
     const moved = await migrateDataDir()
     parsed = moved ?? {}
   }

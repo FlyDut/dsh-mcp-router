@@ -136,7 +136,7 @@ export default defineConfig([
     outputOptions: {
       entryFileNames: 'client.js',
       banner: `window.__ModuleLoader__.load({
-\tid: "dsh-mcp-panel",
+\tid: "dsh-mcp-router",
 \tfactory: (require) => {
 \t\tvar module = { exports: {} };
 \t\tvar exports = module.exports;

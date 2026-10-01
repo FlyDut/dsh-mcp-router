@@ -1,5 +1,5 @@
 /**
- * dsh-mcp-skill-panel — Host 半区入口（接线层）。
+ * dsh-mcp-router — Host 半区入口（接线层）。
  *
  * 插件唯一职责：**决定每个 MCP 服务器对哪个会话以什么粒度可见，并在不可见时按需调用它**。
  * 本文件只做组装与生命周期，各层职责见：
@@ -40,7 +40,7 @@ export { readState, writeState } from './state';
 export { parsePresetMcpText, firstMatchServerName } from './preset-mcp';
 export { describeServer, removeServer, resolveWritableTarget, updateServer } from './domain/mcp-edit';
 export { decideExposure, desiredRunning, presetAllows, isExposure } from './domain/exposure';
-export declare const name = "mcp-panel";
+export declare const name = "dsh-mcp-router";
 export declare const inject: string[];
 export interface Config {
     /** 保活回收窗口（ms）。默认 30_000。 */

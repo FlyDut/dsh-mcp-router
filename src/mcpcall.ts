@@ -281,7 +281,7 @@ async function ensureEnabled(
     await entry.update({ disabled: false })
     state.aiEnabled.add(serverName)
     await control.setAiOwner(entryId, Date.now())
-    ctx.logger.info?.(`mcp-panel: AI enabled MCP server "${serverName}"`)
+    ctx.logger.info?.(`dsh-mcp-router: AI enabled MCP server "${serverName}"`)
   }
   return wasDisabled
 }
@@ -317,7 +317,7 @@ async function waitRegistered(
         if (!view.tools) continue
         try {
           if (Boolean(view.tools.get(name, view.scope as object | undefined))) {
-            ctx.logger.info?.(`mcp-panel: tool "${name}" resolved via view "${view.label}"`)
+            ctx.logger.info?.(`dsh-mcp-router: tool "${name}" resolved via view "${view.label}"`)
             return finish(undefined, view)
           }
         } catch {
@@ -331,7 +331,7 @@ async function waitRegistered(
     }
     offTools = ctx.root.on('tools/change', () => check())
     // 上下文销毁 → 立即终局：此前无 dispose 监听时 Promise 永不 settle，会挂起 dsh_mcp_call。
-    offDispose = ctx.effect(() => () => finish(new Error('context disposed')), 'mcp-panel: waitRegistered')
+    offDispose = ctx.effect(() => () => finish(new Error('context disposed')), 'dsh-mcp-router: waitRegistered')
     // 调用方中止（exec.signal）→ 立即终局。
     if (signal) {
       if (signal.aborted) {
@@ -368,7 +368,7 @@ async function restore(
     }
     await control.clearAiOwner(entryId)
   } catch (error) {
-    ctx.logger.warn?.(`mcp-panel: restore disabled for "${serverName}" failed: ${msgOf(error)}`)
+    ctx.logger.warn?.(`dsh-mcp-router: restore disabled for "${serverName}" failed: ${msgOf(error)}`)
   } finally {
     state.aiEnabled.delete(serverName)
     state.lastUsed.delete(serverName)
@@ -387,7 +387,7 @@ function blockedText(serverName: string, access: McpAccess): string {
     case 'exposure':
       return (
         `MCP server "${serverName}" 已被设为「彻底关闭」（off），不可调用；` +
-        `如需使用，请在 MCP 把它的状态改为「原生注入 / 仅名称 / 隐藏」。`
+        `如需使用，请在 MCP 把它的状态改为「全部 / 仅名称 / 隐藏」。`
       )
     case 'workspace':
       return `MCP server "${serverName}" 属于另一个工作空间的项目级配置，仅该工作空间的会话可用。`
@@ -445,9 +445,9 @@ function startIdleReaper(control: McpControlCtx, ctx: Context, state: Controller
           // 此时放弃本轮回收，不清 owner 不打日志。
           if ((state.refCounts.get(server) ?? 0) > 0) return
           await control.clearAiOwner(entryId)
-          ctx.logger.info?.(`mcp-panel: idle-reaped MCP server "${server}"`)
+          ctx.logger.info?.(`dsh-mcp-router: idle-reaped MCP server "${server}"`)
         } catch (error) {
-          ctx.logger.warn?.(`mcp-panel: idle reaper disable "${server}" failed: ${msgOf(error)}`)
+          ctx.logger.warn?.(`dsh-mcp-router: idle reaper disable "${server}" failed: ${msgOf(error)}`)
         } finally {
           // 仅在无新调用接手时才删除状态，防止把新 call() 的计数清掉。
           if ((state.refCounts.get(server) ?? 0) === 0) {
@@ -527,7 +527,7 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
       } else if (!ref || !ref.running || ref.disabled) {
         return (
           `MCP server "${serverName}" 当前未运行，且它的行不在 loader 中（预设组合行）——` +
-          `无法即时保活启用。请在 MCP 把它切换为「原生注入」或「仅名称」后重启 DSH 生效。`
+          `无法即时保活启用。请在 MCP 把它切换为「全部」或「仅名称」后重启 DSH 生效。`
         )
       }
 
@@ -834,5 +834,5 @@ export function installMcpControlTools(ctx: Context, control: McpControlCtx, con
     return () => {
       for (const d of disposers) d()
     }
-  }, 'mcp-panel: mcp control tools')
+  }, 'dsh-mcp-router: mcp control tools')
 }
