@@ -2,7 +2,7 @@
  * 双语字典：zh/en 真双语（不互为别名），语言跟随 DSH 界面设置。
  *
  * 术语约定（三档，均不注入工具 schema）：
- * - name-only  提示词注入：只暴露服务器名，工具经 dsh_mcp_call 按需调用
+ * - name-only  进程常驻：只暴露服务器名，工具经 dsh_mcp_call 按需调用
  * - hidden     隐藏：完全不进上下文，可 dsh_mcp_search 检索、dsh_mcp_call 按需调用
  * - off        关闭：不可见、不可搜索、不可调用
  */
@@ -17,14 +17,14 @@ export const en: Record<string, string> = {
   'mp.toggleError': 'Failed: {error}',
   // stats
   'mp.statServers': 'servers',
-  'mp.statNameOnly': 'prompt injection',
+  'mp.statNameOnly': 'resident process',
   'mp.statHidden': 'hidden/off',
   'mp.statTools': '{n} tools',
   'mp.statTokens': 'est. tokens',
   // middle layer + apply timing
   'mp.middleLayerTitle': 'AI middle layer',
   'mp.middleLayerDesc':
-    'dsh_mcp_search and dsh_mcp_call are always registered. No MCP tool schema is ever injected into the tool list — every server is reached on demand: dsh_mcp_call enables a hidden server, calls it, then reaps it after an idle window. This never changes your per-turn tool list, so it never invalidates the prompt cache.',
+    'dsh_mcp_search and dsh_mcp_call are always registered. No MCP tool schema is ever injected into the tool list — every server is reached on demand: dsh_mcp_call enables a hidden server, calls it, then reaps it after an idle window. This never changes your per-turn tool list, so it never invalidates the prompt cache.\n\nNote: under PTC mode, a resident-process server keeps its process running, so all of its tools appear in the run_code SDK and can be called directly.',
   'mp.applyTiming': 'Apply timing',
   'mp.applyImmediate': 'Immediate',
   'mp.applyNextSession': 'Next session',
@@ -49,7 +49,7 @@ export const en: Record<string, string> = {
     'The process is running but no tool has been registered for it — the tool count is shown as 0 (not backfilled from the directory snapshot). Check the server log, or restart it.',
   // exposure (four levels)
   'mp.exposureTitle': 'Exposure',
-  'mp.exposureNameOnly': 'Prompt injection',
+  'mp.exposureNameOnly': 'Resident process',
   'mp.exposureNameOnlyHint':
     'Only the server name is injected (a one-line index). The process runs; call tools on demand via dsh_mcp_call, which returns the tool list when the tool name is omitted.',
   'mp.exposureHidden': 'Hidden',
@@ -57,9 +57,9 @@ export const en: Record<string, string> = {
     'Nothing is injected and the process is stopped. Discoverable via dsh_mcp_search and callable via dsh_mcp_call (keep-alive enable + idle reap).',
   'mp.exposureOff': 'Off',
   'mp.exposureOffHint': 'Completely off: invisible, not searchable, not callable.',
-  'mp.runtimeFixed': 'Plugin-provided · prompt injection',
+  'mp.runtimeFixed': 'Plugin-provided · resident process',
   'mp.runtimeFixedHint':
-    'This MCP is created by a plugin, so its process is owned by that plugin and cannot be stopped here. It always behaves as "Prompt injection": no tool schema is injected; tools are discovered via dsh_mcp_search and called via dsh_mcp_call. The server instructions it publishes stay in the prompt.',
+    'This MCP is created by a plugin, so its process is owned by that plugin and cannot be stopped here. It always behaves as "Resident process": no tool schema is injected; tools are discovered via dsh_mcp_search and called via dsh_mcp_call. The server instructions it publishes stay in the prompt.',
   'mp.effective': 'now: {mode}',
   // preset scope (runtime isolation)
   'mp.presetsTitle': 'Preset scope',
@@ -171,14 +171,14 @@ export const zh: Record<string, string> = {
   'mp.toggleError': '全部：{error}',
   // 统计
   'mp.statServers': '个服务器',
-  'mp.statNameOnly': '个提示词注入',
+  'mp.statNameOnly': '个进程常驻',
   'mp.statHidden': '个隐藏/关闭',
   'mp.statTools': '{n} 个工具',
   'mp.statTokens': '约 token',
   // 中间层 + 生效时机全部
   'mp.middleLayerTitle': 'AI 中间层',
   'mp.middleLayerDesc':
-    'dsh_mcp_search 与 dsh_mcp_call 常驻。任何档位都不把 MCP 工具 schema 注入工具清单，全部按需调用：dsh_mcp_call 会临时启用被隐藏的服务器、调用、再按空闲窗口回收。这条路径不改变模型可见的工具集，因此不会造成前缀缓存失效。',
+    'dsh_mcp_search 与 dsh_mcp_call 常驻。任何档位都不把 MCP 工具 schema 注入工具清单，全部按需调用：dsh_mcp_call 会临时启用被隐藏的服务器、调用、再按空闲窗口回收。这条路径不改变模型可见的工具集，因此不会造成前缀缓存失效。\n\n注意：PTC 模式下，进程常驻的服务器因进程持续运行，其全部工具会出现在 run_code 的 SDK 中并可直接调用。',
   'mp.applyTiming': '生效时机',
   'mp.applyImmediate': '立即生效',
   'mp.applyNextSession': '下次会话生效',
@@ -202,7 +202,7 @@ export const zh: Record<string, string> = {
     '进程在跑，但一个工具都没注册上——工具全部 显示（不再用目录快照回填）。请查看该 server 日志或重启它。',
   // 三档
   'mp.exposureTitle': '曝光档位',
-  'mp.exposureNameOnly': '提示词注入',
+  'mp.exposureNameOnly': '进程常驻',
   'mp.exposureNameOnlyHint':
     '上下文只注入服务器名（一行索引）；进程保持运行，工具经 dsh_mcp_call 按需调用（不传工具名即返回该服务器的工具清单）。',
   'mp.exposureHidden': '隐藏',
@@ -210,9 +210,9 @@ export const zh: Record<string, string> = {
     '完全不注入上下文，进程停用；可用 dsh_mcp_search 关键词检索到，并用 dsh_mcp_call 按需调用（保活启用 + 空闲回收）。',
   'mp.exposureOff': '关闭',
   'mp.exposureOffHint': '彻底关闭：不可见、不可搜索、不可调用。',
-  'mp.runtimeFixed': '插件提供 · 提示词注入',
+  'mp.runtimeFixed': '插件提供 · 进程常驻',
   'mp.runtimeFixedHint':
-    '该 MCP 由插件创建，进程归插件所有，这里无法停用。它固定按「提示词注入」处理：不注入工具 schema，工具经 dsh_mcp_search 发现、dsh_mcp_call 按需调用；服务器自报的说明（instructions）会保留在提示词中。',
+    '该 MCP 由插件创建，进程归插件所有，这里无法停用。它固定按「进程常驻」处理：不注入工具 schema，工具经 dsh_mcp_search 发现、dsh_mcp_call 按需调用；服务器自报的说明（instructions）会保留在提示词中。',
   'mp.effective': '当前生效：{mode}',
   // 预设关联（运行时隔离）
   'mp.presetsTitle': '预设关联',

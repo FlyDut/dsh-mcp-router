@@ -64,7 +64,7 @@ export function isPresetMode(value: unknown): value is PresetMode {
   return typeof value === 'string' && (PRESET_MODES as readonly string[]).includes(value)
 }
 
-/** 构造默认策略（未配置过的 server 默认提示词注入索引、按需调用）。 */
+/** 构造默认策略（未配置过的 server 默认进程常驻索引、按需调用）。 */
 export function defaultPolicy(exposure: Exposure = 'name-only'): ServerPolicy {
   return { exposure, presets: { mode: 'all', ids: [] }, disabledTools: [] }
 }

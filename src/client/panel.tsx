@@ -472,7 +472,7 @@ export function McpPanelSection(props: Props): React.ReactElement {
             <div style={C.cardTop}>
               <h3 style={C.cardTitle}>{t('mp.middleLayerTitle')}</h3>
             </div>
-            <p style={C.cardDesc}>{t('mp.middleLayerDesc')}</p>
+            <p style={{ ...C.cardDesc, whiteSpace: 'pre-line' }}>{t('mp.middleLayerDesc')}</p>
           </div>
 
           <div style={C.card}>

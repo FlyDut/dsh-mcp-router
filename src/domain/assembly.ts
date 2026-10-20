@@ -63,7 +63,7 @@ export interface AssemblyDeps {
   runtimeServers?: () => ReadonlyMap<string, { tools: number }>
   /** 运行时 server 是否已就绪（catalog 有非空工具快照）。缺省视为未就绪（放行）。 */
   isRuntimeReady?: (serverName: string) => boolean
-  /** 运行时 server 的档位（策略层给出；面板只开放「提示词注入 / 隐藏」）。缺省按提示词注入。 */
+  /** 运行时 server 的档位（策略层给出；面板只开放「进程常驻 / 隐藏」）。缺省按进程常驻。 */
   runtimeExposureOf?: (serverName: string) => Exposure
   /**
    * 该 server 是否已有工具目录（catalog 非空）。
@@ -108,7 +108,7 @@ export function countSearchableHidden(
  * - 就绪 → 记 `name-only`，装配层据此过滤工具，模型改走 dsh_mcp_search / dsh_mcp_call。
  *
  * @param byServer - 装配计划的 server → 有效曝光映射（原地修改）。
- * @param nameOnly - 提示词注入索引段的 server 列表（原地追加）。
+ * @param nameOnly - 进程常驻索引段的 server 列表（原地追加）。
  * @param runtime - 运行时发现的 server 及工具数。
  * @param isReady - 就绪判定（由上层提供，缺省视为未就绪）。
  */
@@ -123,12 +123,12 @@ export function mergeRuntimeIntoPlan(
     if (byServer.has(serverName)) continue
     if (info.tools <= 0) continue
     if (isReady === undefined || !isReady(serverName)) continue
-    // 档位来自策略层（面板可切「提示词注入 / 隐藏」）；缺省按提示词注入。
+    // 档位来自策略层（面板可切「进程常驻 / 隐藏」）；缺省按进程常驻。
     // `off` 对运行时来源没有意义（插件进程关不掉，设 off 只会变成黑洞），防御性忽略。
     const exposure = exposureOf?.(serverName) ?? 'name-only'
     if (exposure === 'off') continue
     byServer.set(serverName, exposure)
-    // 提示词注入进索引段；隐藏照样过滤工具，只是不列出名字。
+    // 进程常驻进索引段；隐藏照样过滤工具，只是不列出名字。
     if (exposure === 'name-only') nameOnly.push(serverName)
   }
 }
