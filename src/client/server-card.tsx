@@ -221,7 +221,7 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
 
   /**
    * 插件提供的运行时 server（source === 'runtime'）：
-   * - 档位固定为「仅名称」：进程归插件所有，router 停不掉，设 hidden 也只会让工具
+   * - 档位固定为「提示词注入」：进程归插件所有，router 停不掉，设 hidden 也只会让工具
    *   不可见却仍注入服务器说明（instructions），语义反而混乱，因此不提供档位选择；
    * - 不显示预设关联、编辑、删除等服务器级操作（这些配置由插件自己拥有）；
    * - 工具列表照常展示（含搜索与工具级开关），这是用户查看/控制工具的唯一入口。

@@ -392,7 +392,7 @@ async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<Mc
           : null)
       const toolCount = toolList?.length ?? info.tools
       // 插件提供的 MCP 不参与档位管理：进程归插件所有、router 停不掉，设成 hidden
-      // 也只会让工具不可见却仍注入服务器 instructions（语义混乱）。固定按「仅名称」
+      // 也只会让工具不可见却仍注入服务器 instructions（语义混乱）。固定按「提示词注入」
       // 处理：不注入工具 schema、进索引段、可 dsh_mcp_search / dsh_mcp_call。
       mcp.push({
         entryId: `runtime:${serverName}`,

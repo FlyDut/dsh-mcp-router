@@ -401,7 +401,7 @@ function blockedText(serverName: string, access: McpAccess): string {
     case 'exposure':
       return (
         `MCP server "${serverName}" 已被设为「彻底关闭」（off），不可调用；` +
-        `如需使用，请在 MCP 把它的状态改为「全部 / 仅名称 / 隐藏」。`
+        `如需使用，请在 MCP 把它的状态改为「全部 / 提示词注入 / 隐藏」。`
       )
     case 'workspace':
       return `MCP server "${serverName}" 属于另一个工作空间的项目级配置，仅该工作空间的会话可用。`
@@ -419,7 +419,7 @@ function bareNameOf(fullName: string): string {
 
 /**
  * 该 server 的工具清单文本（`dsh_mcp_call` 只传 server、或工具名未知时返回）。
- * 这是「仅名称」档位下模型发现工具的主要路径：不必猜名字，直接问。
+ * 这是「提示词注入」档位下模型发现工具的主要路径：不必猜名字，直接问。
  */
 function toolListText(caches: McpControlCtx, serverName: string): string {
   const listing = listServer(caches.getCatalog(), serverName)
@@ -513,7 +513,7 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
       if (access.blockedBy === 'unknown') return `未知 MCP server：${serverName}（不在注册表中）`
       if (access.effective === 'off') return blockedText(serverName, access)
 
-      // ② 工具名未知/为空 → 直接返回该 server 的工具清单（「仅名称」档位的发现路径）
+      // ② 工具名未知/为空 → 直接返回该 server 的工具清单（「提示词注入」档位的发现路径）
       const rawTool = typeof toolName === 'string' ? toolName.trim() : ''
       if (rawTool.length === 0 || rawTool === '*') return toolListText(caches, serverName)
       const bareTool = normalizeToolName(serverName, rawTool)
@@ -545,7 +545,7 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
       } else if (!ref || !ref.running || ref.disabled) {
         return (
           `MCP server "${serverName}" 当前未运行，且它的行不在 loader 中（预设组合行）——` +
-          `无法即时保活启用。请在 MCP 把它切换为「全部」或「仅名称」后重启 DSH 生效。`
+          `无法即时保活启用。请在 MCP 把它切换为「全部」或「提示词注入」后重启 DSH 生效。`
         )
       }
 

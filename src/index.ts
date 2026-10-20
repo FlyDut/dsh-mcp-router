@@ -6,7 +6,7 @@
  * - `domain/exposure.ts`  四档语义 + 预设关联隔离 + v1 迁移（纯逻辑）
  * - `domain/policy.ts`    策略真源（意图/生效两份 + 持久化 + 启动迁移）
  * - `domain/registry.ts`  MCP 行来源归一（loader / preset standing / 项目级）
- * - `domain/assembly.ts`  唯一装配注入点（工具过滤 + 仅名称索引段）
+ * - `domain/assembly.ts`  唯一装配注入点（工具过滤 + 提示词注入索引段）
  * - `mcpcall.ts`          中间层（dsh_mcp_search / dsh_mcp_call）+ 保活回收
  * - `collect.ts`/`routes.ts` 面板数据与 HTTP 端点
  *
@@ -410,7 +410,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     ctx.logger.warn(`dsh-mcp-router: startup sequence failed: ${messageOf(error)}`)
   })
 
-  // 装配层（常开）：唯一注入点 = 工具过滤 + 仅名称索引段
+  // 装配层（常开）：唯一注入点 = 工具过滤 + 提示词注入索引段
   const disposeAssembly = installAssembly(ctx, {
     registry,
     policy,
@@ -423,7 +423,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     isRuntimeReady: (serverName) => (catalogRuntime.catalog[serverName]?.tools.length ?? 0) > 0,
     // 「另有 N 个未列出」只数真能检索到的：没有工具目录的配置行搜出来是空的。
     hasTools: (serverName) => (catalogRuntime.catalog[serverName]?.tools.length ?? 0) > 0,
-    // 插件提供的 MCP 不参与档位管理：固定「仅名称」（工具 schema 不注入、可检索可调用）。
+    // 插件提供的 MCP 不参与档位管理：固定「提示词注入」（工具 schema 不注入、可检索可调用）。
     runtimeExposureOf: () => 'name-only',
     onPlan: (plan) => {
       catalogRuntime.diag.lastAssemblyNameOnly = plan.nameOnly
@@ -556,7 +556,7 @@ function buildMcpControl(
       // 给它 name-only 的等价访问，使 dsh_mcp_search 能列出/检索这些工具（P1）；
       // 执行路径由 P3 的 tools.execute 分支接管。
       if (runtime.runtimeServers.has(serverName)) {
-        // 插件提供的 server 固定按「仅名称」处理：进程由插件持有，router 既停不掉进程
+        // 插件提供的 server 固定按「提示词注入」处理：进程由插件持有，router 既停不掉进程
         // 也隐藏不了它注入的 instructions，因此不参与档位管理（面板也不提供选择）。
         return { effective: 'name-only', policy: effectivePolicy, presetId, blockedBy: 'none' }
       }

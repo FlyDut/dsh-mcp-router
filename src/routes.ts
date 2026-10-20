@@ -438,9 +438,9 @@ export function makeRoutes(deps: RoutesDeps): Route[] {
           try {
             const { serverName, workspace, patch } = normalizeUpdate(raw)
             // 插件提供的运行时 server：进程生命周期由插件掌管，router 既停不掉进程
-            // 也无法隐藏它注入的 instructions —— 档位固定为「仅名称」，不接受调整。
+            // 也无法隐藏它注入的 instructions —— 档位固定为「提示词注入」，不接受调整。
             if (catalogRuntime.runtimeServers.has(serverName) && patch.exposure !== undefined) {
-              throw new Error(`"${serverName}" 由插件提供，档位固定为「仅名称」，不支持调整`)
+              throw new Error(`"${serverName}" 由插件提供，档位固定为「提示词注入」，不支持调整`)
             }
             const result = await policy.set({ serverName, workspace, patch, applyMode })
             applied = applied || result.applied

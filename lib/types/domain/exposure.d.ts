@@ -51,7 +51,7 @@ export declare const PRESET_MODES: readonly PresetMode[];
 export declare function isExposure(value: unknown): value is Exposure;
 /** 预设模式是否为合法值。 */
 export declare function isPresetMode(value: unknown): value is PresetMode;
-/** 构造默认策略（未配置过的 server 默认仅名称索引、按需调用）。 */
+/** 构造默认策略（未配置过的 server 默认提示词注入索引、按需调用）。 */
 export declare function defaultPolicy(exposure?: Exposure): ServerPolicy;
 /** 宽容解析预设关联（非法输入回落 `all`）。 */
 export declare function normalizePresetScope(raw: unknown): PresetScope;

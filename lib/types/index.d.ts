@@ -6,7 +6,7 @@
  * - `domain/exposure.ts`  四档语义 + 预设关联隔离 + v1 迁移（纯逻辑）
  * - `domain/policy.ts`    策略真源（意图/生效两份 + 持久化 + 启动迁移）
  * - `domain/registry.ts`  MCP 行来源归一（loader / preset standing / 项目级）
- * - `domain/assembly.ts`  唯一装配注入点（工具过滤 + 仅名称索引段）
+ * - `domain/assembly.ts`  唯一装配注入点（工具过滤 + 提示词注入索引段）
  * - `mcpcall.ts`          中间层（dsh_mcp_search / dsh_mcp_call）+ 保活回收
  * - `collect.ts`/`routes.ts` 面板数据与 HTTP 端点
  *
