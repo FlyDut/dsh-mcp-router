@@ -1,6 +1,6 @@
 {
   "name": "dsh-mcp-router",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "MCP 按需调用的路由",
   "repository": {
     "type": "git",
