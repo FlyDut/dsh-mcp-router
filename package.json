@@ -52,8 +52,10 @@
     "selftest:policy": "node scripts/selftest-policy.mjs",
     "selftest:edit": "node scripts/selftest-mcp-edit.mjs",
     "selftest:mcp": "node scripts/selftest-mcp.mjs",
-    "selftest": "pnpm run selftest:exposure && pnpm run selftest:composition && pnpm run selftest:import && pnpm run selftest:policy && pnpm run selftest:edit && pnpm run selftest:mcp",
-    "prepublishOnly": "pnpm run build && pnpm run verify && pnpm run selftest"
+    "selftest": "pnpm run selftest:exposure && pnpm run selftest:composition && pnpm run selftest:import && pnpm run selftest:policy && pnpm run selftest:edit && pnpm run selftest:mcp && pnpm run selftest:runtime && pnpm run selftest:assembly",
+    "prepublishOnly": "pnpm run build && pnpm run verify && pnpm run selftest",
+    "selftest:runtime": "node scripts/selftest-runtime.mjs",
+    "selftest:assembly": "node scripts/selftest-assembly.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

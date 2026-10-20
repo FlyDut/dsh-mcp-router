@@ -40,6 +40,7 @@ export { readState, writeState } from './state';
 export { parsePresetMcpText, firstMatchServerName } from './preset-mcp';
 export { describeServer, removeServer, resolveWritableTarget, updateServer } from './domain/mcp-edit';
 export { decideExposure, desiredRunning, presetAllows, isExposure } from './domain/exposure';
+export { discoverRuntimeServers } from './domain/runtime';
 export declare const name = "dsh-mcp-router";
 export declare const inject: string[];
 export interface Config {
@@ -55,6 +56,15 @@ export interface Config {
     defaultExposure?: Exposure;
     /** 是否注册中间层工具（dsh_mcp_search / dsh_mcp_call）。默认 true。 */
     middleLayer?: boolean;
+    /**
+     * 是否接管运行时发现的「插件内嵌 MCP」—— 由插件在自己的 apply 里用
+     * `ctx.plugin(McpClient, ...)` 动态连接、没有 loader 行的那些 server。
+     *
+     * 默认 true：catalog 采集到工具后，把它们的 schema 从模型上下文中过滤掉，改走
+     * dsh_mcp_search / dsh_mcp_call 按需调用。采集完成前保持放行（fail-open），
+     * 不会出现「过滤了但调不到」的黑洞。设为 false 则完全保持旧行为。
+     */
+    adoptRuntimeServers?: boolean;
 }
 export declare const Config: Schema<Config>;
 export declare function apply(ctx: Context, config?: Config): void;

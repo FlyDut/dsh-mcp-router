@@ -76,6 +76,22 @@ export default defineConfig([
     },
   },
   {
+    // 装配层纯逻辑：计划构建 + 运行时 server 合并（P2 fail-open 规则）。
+    // 独立产物供 scripts/selftest-assembly.mjs 直接断言「未就绪绝不过滤」。
+    entry: ['src/domain/assembly.ts'],
+    format: ['esm'],
+    outDir: 'lib',
+    target: 'node22',
+    platform: 'node',
+    deps: { neverBundle: [/^@deepseek-ai\//, /^node:/] },
+    dts: false,
+    clean: false,
+    sourcemap: false,
+    outputOptions: {
+      entryFileNames: 'assembly.js',
+    },
+  },
+  {
     // 组合文件（patch / agent preset cordis.yml）的文本级行操作：
     // 行块定位 / 删除 / config 键替换 / 缩进行标志。纯逻辑，供 selftest 覆盖。
     entry: ['src/domain/composition-file.ts'],

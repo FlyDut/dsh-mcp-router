@@ -57,6 +57,9 @@ export const en: Record<string, string> = {
     'Nothing is injected and the process is stopped. Discoverable via dsh_mcp_search and callable via dsh_mcp_call (keep-alive enable + idle reap).',
   'mp.exposureOff': 'Off',
   'mp.exposureOffHint': 'Completely off: invisible, not searchable, not callable.',
+  'mp.runtimeFixed': 'Plugin-provided · name only',
+  'mp.runtimeFixedHint':
+    'This MCP is created by a plugin, so its process is owned by that plugin and cannot be stopped here. It always behaves as "Name only": no tool schema is injected; tools are discovered via dsh_mcp_search and called via dsh_mcp_call. The server instructions it publishes stay in the prompt.',
   'mp.effective': 'now: {mode}',
   // preset scope (runtime isolation)
   'mp.presetsTitle': 'Preset scope',
@@ -207,6 +210,9 @@ export const zh: Record<string, string> = {
     '完全不注入上下文，进程停用；可用 dsh_mcp_search 关键词检索到，并用 dsh_mcp_call 按需调用（保活启用 + 空闲回收）。',
   'mp.exposureOff': '关闭',
   'mp.exposureOffHint': '彻底关闭：不可见、不可搜索、不可调用。',
+  'mp.runtimeFixed': '插件提供 · 仅名称',
+  'mp.runtimeFixedHint':
+    '该 MCP 由插件创建，进程归插件所有，这里无法停用。它固定按「仅名称」处理：不注入工具 schema，工具经 dsh_mcp_search 发现、dsh_mcp_call 按需调用；服务器自报的说明（instructions）会保留在提示词中。',
   'mp.effective': '当前生效：{mode}',
   // 预设关联（运行时隔离）
   'mp.presetsTitle': '预设关联',

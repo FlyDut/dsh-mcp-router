@@ -521,6 +521,10 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
         }
         state.refCounts.set(serverName, (state.refCounts.get(serverName) ?? 0) + 1)
         state.lastUsed.set(serverName, Date.now())
+      } else if (access.ref === undefined) {
+        // 运行时来源（插件内嵌 MCP 客户端）：没有 loader 行、也没有注册表 ref。
+        // 它的工具已经注册在 tools 视图里，没有进程需要保活 → 跳过启停，直接执行。
+        // （未知 server 在 ① 已按 blockedBy='unknown' 拦下，这里只会是 discover 到的 runtime。）
       } else if (!ref || !ref.running || ref.disabled) {
         return (
           `MCP server "${serverName}" 当前未运行，且它的行不在 loader 中（预设组合行）——` +

@@ -8,8 +8,14 @@
 import type { Exposure, PresetScope } from './domain/exposure';
 export type { Exposure, PresetMode, PresetScope } from './domain/exposure';
 export type McpStatus = 'active' | 'disabled' | 'idle' | 'failed';
-/** 行来源：loader 行 / 预设 standing 行 / 项目级（工作空间）行。 */
-export type McpSource = 'loader' | 'preset' | 'project';
+/**
+ * 行来源：loader 行 / 预设 standing 行 / 项目级（工作空间）行 / 运行时发现的行。
+ *
+ * `runtime` = 插件内嵌 MCP 客户端（`ctx.plugin(McpClient)`）注册的工具：没有 loader
+ * 行，靠 schema 视图里的 `mcp__<server>__` 前缀认出来。只读、不可编辑，跟随插件自身
+ * 所在预设的启停。
+ */
+export type McpSource = 'loader' | 'preset' | 'project' | 'runtime';
 /** 单个工具的展示信息（面板工具级禁用用）。 */
 export interface McpToolInfo {
     /** 工具注册全名 `mcp__<server>__<tool>`。 */

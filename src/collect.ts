@@ -372,6 +372,54 @@ async function collectMcp(deps: Deps, sessionId: string | undefined): Promise<Mc
   } catch (error) {
     errors.push(`registry.entries: ${messageOf(error)}`)
   }
+
+  // 运行时来源（第四种）：插件内嵌 MCP 客户端没有 loader 行，注册表里没有它们。
+  // P1 只做「展示 + 目录采集」——工具进 catalog 后 dsh_mcp_search 即可检索；
+  // 装配层仍按「未知 server 放行」处理，不改既有上下文行为。
+  try {
+    const declared = new Set(registry.snapshot().all.keys())
+    for (const [serverName, info] of deps.catalogRuntime.runtimeServers) {
+      if (declared.has(serverName)) continue
+      const catalogInfo = deps.catalogRuntime.catalog[serverName]
+      const liveList = toolsByServer.get(serverName)
+      const toolList =
+        liveList ??
+        (catalogInfo
+          ? catalogInfo.tools.map((tool) => ({
+              name: String(tool.name ?? ''),
+              description: String(tool.description ?? ''),
+            }))
+          : null)
+      const toolCount = toolList?.length ?? info.tools
+      // 插件提供的 MCP 不参与档位管理：进程归插件所有、router 停不掉，设成 hidden
+      // 也只会让工具不可见却仍注入服务器 instructions（语义混乱）。固定按「仅名称」
+      // 处理：不注入工具 schema、进索引段、可 dsh_mcp_search / dsh_mcp_call。
+      mcp.push({
+        entryId: `runtime:${serverName}`,
+        rowId: `runtime:${serverName}`,
+        serverName,
+        transport: null,
+        disabled: false,
+        running: true,
+        unregistered: toolCount === 0,
+        tools: toolCount,
+        tokens: catalogTokens(deps.catalogRuntime, serverName, catalogInfo),
+        status: toolCount > 0 ? 'active' : 'idle',
+        exposure: 'name-only',
+        effectiveExposure: 'name-only',
+        presetScope: { mode: 'all', ids: [] },
+        presetAllowed: true,
+        pending: false,
+        configured: false,
+        source: 'runtime',
+        writable: false,
+        toolList: toolList?.map((tool) => ({ name: tool.name, description: tool.description, disabled: false })) ?? null,
+      })
+    }
+  } catch (error) {
+    errors.push(`runtime.servers: ${messageOf(error)}`)
+  }
+
   mcp.sort((a, b) => a.serverName.localeCompare(b.serverName))
 
   return {

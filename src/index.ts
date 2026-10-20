@@ -24,6 +24,7 @@ import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CatalogEntry } from './catalog'
 import { snapshotFromSchemas, loadCatalog, saveCatalog } from './catalog'
+import { discoverRuntimeServers } from './domain/runtime'
 import type { McpControlCtx, McpCallController, McpAccess } from './mcpcall'
 import { createMcpCallController, installMcpControlTools } from './mcpcall'
 import type { CatalogRuntime } from './runtime-types'
@@ -73,6 +74,8 @@ export { parsePresetMcpText, firstMatchServerName } from './preset-mcp'
 export { describeServer, removeServer, resolveWritableTarget, updateServer } from './domain/mcp-edit'
 // 领域纯逻辑再导出（端到端验证与外部复用；独立构建入口见 lib/exposure.js）
 export { decideExposure, desiredRunning, presetAllows, isExposure } from './domain/exposure'
+// 运行时发现纯函数（selftest 回归护栏：注册表外的 server 识别 + 畸形名跳过）
+export { discoverRuntimeServers } from './domain/runtime'
 
 export const name = 'dsh-mcp-router'
 
@@ -91,6 +94,15 @@ export interface Config {
   defaultExposure?: Exposure
   /** 是否注册中间层工具（dsh_mcp_search / dsh_mcp_call）。默认 true。 */
   middleLayer?: boolean
+  /**
+   * 是否接管运行时发现的「插件内嵌 MCP」—— 由插件在自己的 apply 里用
+   * `ctx.plugin(McpClient, ...)` 动态连接、没有 loader 行的那些 server。
+   *
+   * 默认 true：catalog 采集到工具后，把它们的 schema 从模型上下文中过滤掉，改走
+   * dsh_mcp_search / dsh_mcp_call 按需调用。采集完成前保持放行（fail-open），
+   * 不会出现「过滤了但调不到」的黑洞。设为 false 则完全保持旧行为。
+   */
+  adoptRuntimeServers?: boolean
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -102,6 +114,9 @@ export const Config: Schema<Config> = Schema.object({
     .description('未配置 MCP 的默认档位')
     .default('name-only'),
   middleLayer: Schema.boolean().description('注册 dsh_mcp_search / dsh_mcp_call 中间层工具').default(true),
+  adoptRuntimeServers: Schema.boolean()
+    .description('接管插件内嵌 MCP（采集后过滤工具、按需调用；关闭则保持旧行为）')
+    .default(true),
 })
 
 /** 私有 catalog / state 持久化目录。 */
@@ -232,6 +247,23 @@ async function snapshotEnabled(
     runtime.diag.lastScope = mcpTools > 0
     // 一次取快照：采集与 prune 共用同一份行集合，避免两次读取间状态漂移。
     const refs = registry.snapshot().all
+    // 第四种来源：运行时发现的插件内嵌 MCP server（无 loader 行）。
+    // P1 阶段只做「发现 + 采集 + 展示」，装配层过滤行为保持不变（未知 server 仍放行）。
+    const runtimeDiscovery = discoverRuntimeServers(schemas, new Set(refs.keys()))
+    runtime.diag.lastRuntimeServers = [...runtimeDiscovery.servers.keys()]
+    for (const serverName of runtimeDiscovery.servers.keys()) {
+      let tools: CatalogEntry[]
+      try {
+        tools = snapshotFromSchemas(schemas, serverName)
+      } catch {
+        continue // 采集失败：保留上一轮快照，绝不写空
+      }
+      const prev = next[serverName]
+      if (prev && prev.source === 'live' && sameToolList(prev.tools, tools)) continue
+      if (tools.length === 0) continue
+      next[serverName] = { tools, fetchedAt: Date.now(), source: 'live' }
+      changed = true
+    }
     for (const ref of refs.values()) {
       if (ref.disabled) continue
       const serverName = ref.serverName
@@ -252,6 +284,7 @@ async function snapshotEnabled(
     // 失效清理：alive = 注册表里仍配置的**全部**行（含停用行 —— 停用不等于删除，
     // 其 last-good 必须留给面板与 dsh_mcp_search 兜底）。注册表为空（启动早期）时跳过 prune。
     const alive = new Set<string>(refs.keys())
+    for (const serverName of runtimeDiscovery.servers.keys()) alive.add(serverName)
     if (alive.size > 0) {
       for (const key of Object.keys(next)) {
         if (!alive.has(key)) {
@@ -261,6 +294,11 @@ async function snapshotEnabled(
       }
     }
     runtime.catalog = next
+    // 运行时来源整表替换：本轮视图里没出现 = 插件卸载/工具消失，面板不再显示。
+    const nowAt = Date.now()
+    runtime.runtimeServers = new Map(
+      [...runtimeDiscovery.servers.entries()].map(([serverName, tools]) => [serverName, { tools, at: nowAt }]),
+    )
     if (changed) {
       runtime.dirty = true
       void persistCatalog(() => ctx, runtime)
@@ -283,6 +321,7 @@ function createCatalogRuntime(): CatalogRuntime {
     lastPersistAt: null,
     persistTimer: undefined,
     tokenCache: new Map(),
+    runtimeServers: new Map(),
     diag: {
       toolsChangeEvents: 0,
       snapshots: 0,
@@ -295,6 +334,9 @@ function createCatalogRuntime(): CatalogRuntime {
       lastAgentList: null,
       loadedAt: null,
       loadedServers: null,
+      lastRuntimeServers: null,
+      lastAssemblyNameOnly: null,
+      lastAssemblyHidden: null,
     },
   }
 }
@@ -305,6 +347,8 @@ export function apply(ctx: Context, config: Config = {}): void {
   const caches = createDomainCaches()
   const catalogRuntime = createCatalogRuntime()
   const fallbackExposure: Exposure = config.defaultExposure ?? 'name-only'
+  /** P2：接管插件内嵌 MCP（默认开）；关闭时装配层拿不到 runtime 表，行为回到旧版。 */
+  const adoptRuntimeServers = config.adoptRuntimeServers !== false
 
   // 注册表：三种来源归一（loader 行同步、preset standing 行异步刷新）
   const registry: Registry = createRegistry(ctx, () => caches.invalidateMcp())
@@ -339,6 +383,9 @@ export function apply(ctx: Context, config: Config = {}): void {
       catalogRuntime.loaded = true
       catalogRuntime.diag.loadedAt = Date.now()
       catalogRuntime.diag.loadedServers = Object.keys(catalog).length
+      // 磁盘 catalog 就绪后立刻补一次采集：启动早期的 snapshotEnabled 会因 loaded=false
+      // 跳过，若不在这里补，运行时来源要等下一次 tools/change 才被发现。
+      void snapshotEnabled(ctx, catalogRuntime, caches, registry)
     },
     () => {
       catalogRuntime.catalog = {}
@@ -369,6 +416,19 @@ export function apply(ctx: Context, config: Config = {}): void {
     policy,
     isAiActive: (serverName) => controller.isAiEnabled(serverName),
     summaryOf: (serverName) => summaryOf(serverName, config, catalogRuntime),
+    // P2：运行时发现的插件内嵌 MCP —— 只有 catalog 采到非空工具快照后才过滤（fail-open）。
+    // 未采集 / 采集失败 / 采集为空 → 不进 byServer → 装配层按「未知 server 放行」保留工具。
+    runtimeServers: () =>
+      adoptRuntimeServers ? (catalogRuntime.runtimeServers as ReadonlyMap<string, { tools: number }>) : new Map(),
+    isRuntimeReady: (serverName) => (catalogRuntime.catalog[serverName]?.tools.length ?? 0) > 0,
+    // 「另有 N 个未列出」只数真能检索到的：没有工具目录的配置行搜出来是空的。
+    hasTools: (serverName) => (catalogRuntime.catalog[serverName]?.tools.length ?? 0) > 0,
+    // 插件提供的 MCP 不参与档位管理：固定「仅名称」（工具 schema 不注入、可检索可调用）。
+    runtimeExposureOf: () => 'name-only',
+    onPlan: (plan) => {
+      catalogRuntime.diag.lastAssemblyNameOnly = plan.nameOnly
+      catalogRuntime.diag.lastAssemblyHidden = plan.hiddenCount
+    },
   })
   ctx.effect(() => disposeAssembly, 'dsh-mcp-router: assembly teardown')
 
@@ -490,7 +550,17 @@ function buildMcpControl(
   const accessFor = (serverName: string, presetId: string | undefined, workspace: string | undefined): McpAccess => {
     const ref = registry.refFor(serverName, presetId)
     const effectivePolicy = policy.effective(serverName, ref?.workspace)
-    if (!ref) return { effective: 'off', policy: effectivePolicy, presetId, blockedBy: 'unknown' }
+    if (!ref) {
+      // 运行时来源（插件内嵌 MCP 客户端）：没有注册表行，但工具确实注册在 schema 视图里。
+      // 给它 name-only 的等价访问，使 dsh_mcp_search 能列出/检索这些工具（P1）；
+      // 执行路径由 P3 的 tools.execute 分支接管。
+      if (runtime.runtimeServers.has(serverName)) {
+        // 插件提供的 server 固定按「仅名称」处理：进程由插件持有，router 既停不掉进程
+        // 也隐藏不了它注入的 instructions，因此不参与档位管理（面板也不提供选择）。
+        return { effective: 'name-only', policy: effectivePolicy, presetId, blockedBy: 'none' }
+      }
+      return { effective: 'off', policy: effectivePolicy, presetId, blockedBy: 'unknown' }
+    }
     const effective = exposureForRef(assemblyDeps, ref, presetId, workspace)
     const workspaceMismatch = ref.workspace !== undefined && !sameWorkspace(ref.workspace, workspace)
     const blockedBy = effective === 'off' ? offReason(effectivePolicy, presetId, workspaceMismatch) : 'none'

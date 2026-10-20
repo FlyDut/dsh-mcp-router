@@ -219,6 +219,15 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
     return fullName.startsWith(prefix) ? fullName.slice(prefix.length) : fullName
   }
 
+  /**
+   * 插件提供的运行时 server（source === 'runtime'）：
+   * - 档位固定为「仅名称」：进程归插件所有，router 停不掉，设 hidden 也只会让工具
+   *   不可见却仍注入服务器说明（instructions），语义反而混乱，因此不提供档位选择；
+   * - 不显示预设关联、编辑、删除等服务器级操作（这些配置由插件自己拥有）；
+   * - 工具列表照常展示（含搜索与工具级开关），这是用户查看/控制工具的唯一入口。
+   */
+  const isRuntime = row.source === 'runtime'
+
   const setExposure = (exposure: Exposure): void => {
     if (exposure === row.exposure) return
     submit([{ serverName: row.serverName, workspace: row.workspace, exposure }], `exposure:${row.serverName}`)
@@ -263,23 +272,32 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
           )}
         </h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{ ...C.segmented, ...(busy ? C.busy : {}) }} role="group" aria-label={t('mp.exposureTitle')}>
-            {EXPOSURE_ORDER.map((exposure) => (
-              <button
-                key={exposure}
-                type="button"
-                disabled={busy}
-                style={C.seg(exposure === row.exposure)}
-                onClick={() => setExposure(exposure)}
-              >
-                {t(exposureKey(exposure, 'label'))}
-              </button>
-            ))}
-          </div>
+          {isRuntime ? (
+            <span
+              style={C.badge('var(--dsw-alias-label-secondary)', 'var(--dsw-alias-fill-l2)')}
+              title={t('mp.runtimeFixedHint')}
+            >
+              {t('mp.runtimeFixed')}
+            </span>
+          ) : (
+            <div style={{ ...C.segmented, ...(busy ? C.busy : {}) }} role="group" aria-label={t('mp.exposureTitle')}>
+              {EXPOSURE_ORDER.map((exposure) => (
+                <button
+                  key={exposure}
+                  type="button"
+                  disabled={busy}
+                  style={C.seg(exposure === row.exposure)}
+                  onClick={() => setExposure(exposure)}
+                >
+                  {t(exposureKey(exposure, 'label'))}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
-      <p style={C.hint}>{t(exposureKey(row.exposure, 'hint'))}</p>
+      <p style={C.hint}>{isRuntime ? t('mp.runtimeFixedHint') : t(exposureKey(row.exposure, 'hint'))}</p>
 
       <div style={C.meta}>
         {t('mp.toolsCount', { n: row.tools })} · {t('mp.tokensCount', { n: formatK(row.tokens) })}
@@ -290,46 +308,50 @@ export function ServerCard(props: ServerCardProps): React.ReactElement {
 
       <div style={C.actions}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button type="button" style={C.fold} onClick={() => setPresetOpen((v) => !v)}>
-            {presetOpen ? '▾' : '▸'} {t('mp.presetsTitle')}：{t(`mp.presetMode.${scope.mode}`)}
-            {scope.mode !== 'all' ? ` (${scope.ids.length})` : ''}
-          </button>
+          {!isRuntime && (
+            <button type="button" style={C.fold} onClick={() => setPresetOpen((v) => !v)}>
+              {presetOpen ? '▾' : '▸'} {t('mp.presetsTitle')}：{t(`mp.presetMode.${scope.mode}`)}
+              {scope.mode !== 'all' ? ` (${scope.ids.length})` : ''}
+            </button>
+          )}
           {toolList.length > 0 && (
             <button type="button" style={C.fold} onClick={() => setToolsOpen((v) => !v)}>
               {toolsOpen ? '▾' : '▸'} {t('mp.toolsTitle')} ({toolList.length})
             </button>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          {!row.writable && (
-            <span
-              style={C.badge('var(--dsw-alias-label-tertiary)', 'var(--dsw-alias-fill-l2)')}
-              title={t('mp.readonlyHint')}
+        {!isRuntime && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {!row.writable && (
+              <span
+                style={C.badge('var(--dsw-alias-label-tertiary)', 'var(--dsw-alias-fill-l2)')}
+                title={t('mp.readonlyHint')}
+              >
+                {t('mp.readonlyBadge')}
+              </span>
+            )}
+            <button
+              type="button"
+              style={C.opBtn(false, !row.writable)}
+              disabled={!row.writable}
+              title={row.writable ? t('mp.edit') : t('mp.readonlyHint')}
+              onClick={() => onEdit(row)}
             >
-              {t('mp.readonlyBadge')}
-            </span>
-          )}
-          <button
-            type="button"
-            style={C.opBtn(false, !row.writable)}
-            disabled={!row.writable}
-            title={row.writable ? t('mp.edit') : t('mp.readonlyHint')}
-            onClick={() => onEdit(row)}
-          >
-            {t('mp.edit')}
-          </button>
-          <button
-            type="button"
-            style={C.opBtn(true, !row.writable)}
-            disabled={!row.writable}
-            title={row.writable ? t('mp.remove') : t('mp.readonlyHint')}
-            onClick={() => onRemove(row)}
-          >
-            {t('mp.remove')}
-          </button>
-        </div>
+              {t('mp.edit')}
+            </button>
+            <button
+              type="button"
+              style={C.opBtn(true, !row.writable)}
+              disabled={!row.writable}
+              title={row.writable ? t('mp.remove') : t('mp.readonlyHint')}
+              onClick={() => onRemove(row)}
+            >
+              {t('mp.remove')}
+            </button>
+          </div>
+        )}
       </div>
-      {presetOpen && (
+      {!isRuntime && presetOpen && (
         <div style={C.panel}>
           <div style={C.presetRow}>
             {(['all', 'only', 'except'] as const).map((mode) => (

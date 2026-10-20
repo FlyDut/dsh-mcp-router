@@ -53,6 +53,84 @@ export interface AssemblyDeps {
   isAiActive: (serverName: string) => boolean
   /** 该 server 的一句话摘要（catalog / config.serverSummary）。 */
   summaryOf: (serverName: string) => string | undefined
+  /**
+   * 运行时发现的插件内嵌 MCP server（注册表之外）。
+   *
+   * 只有 **已就绪** 的才会被纳入过滤（fail-open）：就绪 = catalog 已采集到工具
+   * 且执行链可用。未就绪的一律保持「未知 server 放行」，避免出现「过滤了但调不到」
+   * 的黑洞。返回空表即关闭接管（adoptRuntimeServers=false）。
+   */
+  runtimeServers?: () => ReadonlyMap<string, { tools: number }>
+  /** 运行时 server 是否已就绪（catalog 有非空工具快照）。缺省视为未就绪（放行）。 */
+  isRuntimeReady?: (serverName: string) => boolean
+  /** 运行时 server 的档位（策略层给出；面板只开放「仅名称 / 隐藏」）。缺省按仅名称。 */
+  runtimeExposureOf?: (serverName: string) => Exposure
+  /**
+   * 该 server 是否已有工具目录（catalog 非空）。
+   *
+   * 只用于「另有 N 个未列出」的计数口径：索引段承诺了「可用 dsh_mcp_search 检索」，
+   * 所以 N 必须是**真能检索到**的 hidden 服务器数，而不是配置行数（未安装/未运行的
+   * 服务器搜出来是空的）。缺省时退回旧口径（按配置行数），保持向后兼容。
+   */
+  hasTools?: (serverName: string) => boolean
+  /** 每次构建装配计划后的观察回调（诊断用：把 nameOnly/byServer 暴露到 /debug）。 */
+  onPlan?: (plan: AssemblyPlan) => void
+}
+
+/**
+ * 「另有 N 个未列出」的计数口径（纯函数，selftest 覆盖）。
+ *
+ * 索引段承诺了「可用 dsh_mcp_search 检索」，所以只数**确实有工具目录**的 hidden
+ * 服务器；未安装 / 未运行 / 采集为空的配置行不算，否则提示的数字会远大于实际可搜到的。
+ *
+ * @param hiddenNames - 档位为 hidden 的 server 名。
+ * @param hasTools - 工具目录判定；缺省（undefined）时保持旧口径 = 全部计数。
+ * @returns 可检索的 hidden server 数。
+ */
+export function countSearchableHidden(
+  hiddenNames: readonly string[],
+  hasTools: ((serverName: string) => boolean) | undefined,
+): number {
+  if (hasTools === undefined) return hiddenNames.length
+  let count = 0
+  for (const serverName of hiddenNames) {
+    if (hasTools(serverName)) count += 1
+  }
+  return count
+}
+
+/**
+ * 把已就绪的运行时 server 合并进装配计划（纯函数，selftest 覆盖）。
+ *
+ * 规则：
+ * - 注册表已声明的 server 优先，不重复处理；
+ * - 未就绪（catalog 没采到 / 工具数为 0）→ 跳过 = 保持放行；
+ * - 就绪 → 记 `name-only`，装配层据此过滤工具，模型改走 dsh_mcp_search / dsh_mcp_call。
+ *
+ * @param byServer - 装配计划的 server → 有效曝光映射（原地修改）。
+ * @param nameOnly - 仅名称索引段的 server 列表（原地追加）。
+ * @param runtime - 运行时发现的 server 及工具数。
+ * @param isReady - 就绪判定（由上层提供，缺省视为未就绪）。
+ */
+export function mergeRuntimeIntoPlan(
+  byServer: Map<string, Exposure>,
+  nameOnly: string[],
+  runtime: ReadonlyMap<string, { tools: number }>,
+  isReady: ((serverName: string) => boolean) | undefined,
+  exposureOf?: (serverName: string) => Exposure,
+): void {
+  for (const [serverName, info] of runtime) {
+    if (byServer.has(serverName)) continue
+    if (info.tools <= 0) continue
+    if (isReady === undefined || !isReady(serverName)) continue
+    // 档位来自策略层（面板可切「仅名称 / 隐藏」）；缺省按仅名称。
+    // `off` 对运行时来源没有意义（插件进程关不掉，设 off 只会变成黑洞），防御性忽略。
+    const exposure = exposureOf?.(serverName) ?? 'name-only'
+    if (exposure === 'off') continue
+    byServer.set(serverName, exposure)
+    // 仅名称进索引段；隐藏照样过滤工具，只是不列出名字。
+    if (exposure === 'name-only') nameOnly.push(serverName)
+  }
 }
 
 /** 计算某 server 的有效曝光（先作用域、再档位）。装配层与中间层共用。 */
@@ -83,14 +161,23 @@ export function buildAssemblyPlan(deps: AssemblyDeps, context: { agent?: unknown
   const workspace = agentWorkspace(context?.agent)
   const byServer = new Map<string, Exposure>()
   const nameOnly: string[] = []
-  let hiddenCount = 0
+  const hidden: string[] = []
 
   for (const ref of deps.registry.snapshot().all.values()) {
     const effective = exposureForRef(deps, ref, presetId, workspace)
     byServer.set(ref.serverName, effective)
     if (effective === 'name-only') nameOnly.push(ref.serverName)
-    else if (effective === 'hidden') hiddenCount += 1
+    else if (effective === 'hidden') hidden.push(ref.serverName)
   }
+  const hiddenCount = countSearchableHidden(hidden, deps.hasTools)
+  // 运行时发现的插件内嵌 MCP：只有已就绪的才纳入过滤（fail-open）。
+  mergeRuntimeIntoPlan(
+    byServer,
+    nameOnly,
+    deps.runtimeServers?.() ?? new Map(),
+    deps.isRuntimeReady,
+    deps.runtimeExposureOf,
+  )
   nameOnly.sort((a, b) => a.localeCompare(b))
   return { presetId, workspace, byServer, nameOnly, hiddenCount }
 }
@@ -100,22 +187,17 @@ export function renderServerIndex(deps: AssemblyDeps, plan: AssemblyPlan): strin
   if (plan.nameOnly.length === 0 && plan.hiddenCount === 0) return ''
   const lines: string[] = []
   if (plan.nameOnly.length > 0) {
-    lines.push('## MCP 服务器（工具未直接注入，按需调用）')
+    lines.push('## MCP 路由器')
     lines.push('')
     lines.push(
-      '下列 MCP 服务器已就绪但未把工具清单注入上下文。用 `dsh_mcp_call`（`server` + `tool` + `arguments`）直接调用；' +
+      ' MCP 服务器已就绪但未把工具清单注入上下文，按需调用。用 `dsh_mcp_call`（`server` + `tool` + `arguments`）直接调用；' +
         '不确定工具名时用 `dsh_mcp_search` 传 `server` 查看该服务器的工具清单。',
     )
-    lines.push('')
-    for (const server of plan.nameOnly) {
-      const raw = deps.summaryOf(server)
-      const summary = raw && raw.length > 0 ? (raw.length > SUMMARY_MAX_LEN ? `${raw.slice(0, SUMMARY_MAX_LEN)}…` : raw) : ''
-      lines.push(summary.length > 0 ? `- ${server}: ${summary}` : `- ${server}`)
-    }
   }
+  lines.push('')
   if (plan.hiddenCount > 0) {
     if (lines.length > 0) lines.push('')
-    lines.push(`另有 ${plan.hiddenCount} 个 MCP 服务器未在此列出，可用 \`dsh_mcp_search\` 以关键词检索。`)
+    lines.push(`另有 ${plan.hiddenCount} 个 MCP 服务器未在提示词中列出，可用 \`dsh_mcp_search\` 以关键词检索。`)
   }
   return lines.join('\n')
 }
@@ -126,15 +208,20 @@ export function renderServerIndex(deps: AssemblyDeps, plan: AssemblyPlan): strin
  */
 export function installAssembly(ctx: Context, depsRaw: Omit<AssemblyDeps, 'ctxForPreset'>): () => void {
   const deps: AssemblyDeps = { ...depsRaw, ctxForPreset: ctx }
-  // 同一次装配内，assemble 监听器与 section provider 都要这份计划：按 agent 单槽缓存
-  let lastAgent: unknown
-  let lastPlan: AssemblyPlan | undefined
+  // 装配计划每次实时计算。
+  //
+  // 历史实现按 agent 缓存单槽计划（assemble 监听器与 section provider 共用），但缓存
+  // 永远不失效：运行时来源（插件内嵌 MCP）在首轮装配时往往还没采到 catalog，算出的
+  // 「没有它」的计划会被后续所有轮次复用 —— 索引段永远不出现、也永远不接管。
+  // 计划构建本身只是遍历十几行注册表 + 几个 runtime server（纯内存读），实时计算
+  // 的开销可以忽略，正确性优先。
   const planFor = (context: { agent?: unknown } | undefined): AssemblyPlan => {
-    const agent = context?.agent
-    if (lastPlan !== undefined && agent !== undefined && agent === lastAgent) return lastPlan
     const plan = buildAssemblyPlan(deps, context)
-    lastAgent = agent
-    lastPlan = plan
+    try {
+      deps.onPlan?.(plan)
+    } catch {
+      /* 诊断回调绝不能影响装配 */
+    }
     return plan
   }
 
