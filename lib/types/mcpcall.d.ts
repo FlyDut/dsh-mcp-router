@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader';
+import { type ToolExecutionToken } from '@deepseek-ai/dsh-tools';
 import type { Catalog } from './catalog';
 import type { Exposure, ServerPolicy } from './domain/exposure';
 import type { ServerRef } from './domain/registry';
@@ -115,7 +116,16 @@ export interface McpCallController {
      */
     markUserEnabled(serverName: string): void;
     /** 完整调用流程，返回给模型的文本结果（不会 throw，错误也转文本）。 */
-    call(serverName: string, toolName: string, args: unknown, agent: Agent | undefined, signal: AbortSignal, explicitTimeoutMs?: number): Promise<string>;
+    call(serverName: string, toolName: string, args: unknown, agent: Agent | undefined, signal: AbortSignal, explicitTimeoutMs?: number, 
+    /**
+     * 嵌套派发上下文（dsh_mcp_call 自身的执行令牌 + 根调用 id）。
+     *
+     * PTC 模式下 `tools.execute` 会拒绝「模型直调」的非 run_code 工具名（collapse），
+     * 只放行带 `parent` 的嵌套调用。dsh_mcp_call 是复合工具，内部再派发时必须把
+     * 自己的 token 作为内层的 parent 传下去，否则模型在 run_code 里写的
+     * `await tools.dsh_mcp_call(...)` 会在内层执行时被拒。
+     */
+    nesting?: McpNesting): Promise<string>;
     /** 启动空闲回收器；返回 disposer。 */
     startIdleReaper(): () => void;
     /** 诊断视图：AI 启用的 server 及其引用计数。 */
@@ -124,6 +134,13 @@ export interface McpCallController {
         refCount: number;
         lastUsed: number;
     }>;
+}
+/** 复合工具派发嵌套调用时需要透传的执行身份（见 {@link McpCallController.call}）。 */
+export interface McpNesting {
+    /** 当前 dsh_mcp_call 执行的 registry 令牌，作为内层 execute 的 parent。 */
+    token?: ToolExecutionToken;
+    /** 根调用 id：嵌套派发要延续同一棵树。 */
+    rootCallId?: unknown;
 }
 export declare function msgOf(error: unknown): string;
 /**

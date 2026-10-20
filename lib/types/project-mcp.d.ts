@@ -66,7 +66,7 @@ export declare function remountWorkspace(ctx: Context, root: string, policy: Pol
  * 背景：projectOwners 是模块级内存表，插件 HMR 重载即清空，而 loader 根树上的
  * projmcp-* 行仍然存在 → 期间项目工具短暂按全局展示、项目级禁用作用域错判。
  * state.json 的 projects 分区（工作空间 → serverName → 策略）保存了 owner 关系，
- * 以 loader 存活行交叉验证后重建；watcher/entries 由下次 session-start 的
+ * 以 loader 存活行交叉验证后重建；watcher/entries 由下次 agent/created 的
  * ensureWorkspace 完整恢复。
  */
 export declare function rebuildOwnersFromState(ctx: Context): Promise<void>;

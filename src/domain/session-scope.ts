@@ -40,7 +40,7 @@ export function agentWorkspace(agent: unknown): string | undefined {
 let lastPresetId: string | undefined
 let lastWorkspace: string | undefined
 
-/** 会话边界记录最近作用域（index.ts 的 agent/session-start 监听调用）。 */
+/** 会话边界记录最近作用域（index.ts 的 agent/created 监听调用）。 */
 export function rememberSessionScope(presetId: string | undefined, workspace: string | undefined): void {
   if (presetId !== undefined) lastPresetId = presetId
   if (workspace !== undefined) lastWorkspace = workspace

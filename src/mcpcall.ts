@@ -22,7 +22,7 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Entry } from '@deepseek-ai/cordis-plugin-loader'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { Catalog, SearchHit } from './catalog'
 import { searchCatalog, listServer, serverOfMcp } from './catalog'
@@ -208,11 +208,28 @@ export interface McpCallController {
     agent: Agent | undefined,
     signal: AbortSignal,
     explicitTimeoutMs?: number,
+    /**
+     * 嵌套派发上下文（dsh_mcp_call 自身的执行令牌 + 根调用 id）。
+     *
+     * PTC 模式下 `tools.execute` 会拒绝「模型直调」的非 run_code 工具名（collapse），
+     * 只放行带 `parent` 的嵌套调用。dsh_mcp_call 是复合工具，内部再派发时必须把
+     * 自己的 token 作为内层的 parent 传下去，否则模型在 run_code 里写的
+     * `await tools.dsh_mcp_call(...)` 会在内层执行时被拒。
+     */
+    nesting?: McpNesting,
   ): Promise<string>
   /** 启动空闲回收器；返回 disposer。 */
   startIdleReaper(): () => void
   /** 诊断视图：AI 启用的 server 及其引用计数。 */
   status(): Array<{ server: string; refCount: number; lastUsed: number }>
+}
+
+/** 复合工具派发嵌套调用时需要透传的执行身份（见 {@link McpCallController.call}）。 */
+export interface McpNesting {
+  /** 当前 dsh_mcp_call 执行的 registry 令牌，作为内层 execute 的 parent。 */
+  token?: ToolExecutionToken
+  /** 根调用 id：嵌套派发要延续同一棵树。 */
+  rootCallId?: unknown
 }
 
 export function msgOf(error: unknown): string {
@@ -490,7 +507,7 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
       if (entry) void caches.clearAiOwner(entry.id)
     },
 
-    async call(serverName, toolName, args, agent, signal, explicitTimeoutMs) {
+    async call(serverName, toolName, args, agent, signal, explicitTimeoutMs, nesting) {
       // ① 访问判定（曝光档位 + 预设隔离）：与装配层同源，保证「看不到就调不动」
       const access = caches.accessOf(serverName, agent)
       if (access.blockedBy === 'unknown') return `未知 MCP server：${serverName}（不在注册表中）`
@@ -542,6 +559,11 @@ export function createMcpCallController(ctx: Context, caches: McpControlCtx): Mc
         const execTools = view!.tools!
         const result = (await execTools.execute({
           callId: `mcp-call-${randomUUID()}` as import('@deepseek-ai/dsh-llm').ToolCallId,
+          // PTC 兼容：延续根调用树 + 把当前 dsh_mcp_call 的 token 作为内层 parent。
+          // ptc 模式下 `collapses()` 只放行带 parent 的嵌套调用，缺了它内层会被判成
+          // 模型直调并返回 UNKNOWN_TOOL。
+          ...(nesting?.rootCallId === undefined ? {} : { rootCallId: nesting.rootCallId as never }),
+          ...(nesting?.token === undefined ? {} : { parent: nesting.token }),
           name,
           arguments: args,
           agent,
@@ -809,7 +831,16 @@ function registerMcpCallTool(ctx: Context, controller: McpCallController): () =>
     },
     execute: (args, exec) => {
       // 2026-08-24：模型可能把 arguments 填成 JSON 字符串（见 normalizeArguments 注释），先归一化再透传
-      return controller.call(args.server, args.tool, normalizeArguments(args.arguments), exec.agent, exec.signal)
+      // nesting：把本次执行的令牌传下去，ptc 模式下内层 execute 才能作为嵌套调用放行。
+      return controller.call(
+        args.server,
+        args.tool,
+        normalizeArguments(args.arguments),
+        exec.agent,
+        exec.signal,
+        undefined,
+        { token: exec.token, rootCallId: exec.rootCallId },
+      )
     },
   })
   return ctx.tools.register(definition)

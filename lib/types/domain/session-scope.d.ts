@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis';
 export declare function agentPresetId(ctx: Context, agent: unknown): string | undefined;
 /** 从 agent 对象读会话工作空间 cwd（无 agent → undefined）。 */
 export declare function agentWorkspace(agent: unknown): string | undefined;
-/** 会话边界记录最近作用域（index.ts 的 agent/session-start 监听调用）。 */
+/** 会话边界记录最近作用域（index.ts 的 agent/created 监听调用）。 */
 export declare function rememberSessionScope(presetId: string | undefined, workspace: string | undefined): void;
 /** 读最近一次会话作用域（面板兜底）。 */
 export declare function lastSessionScope(): {

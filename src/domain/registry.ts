@@ -220,7 +220,10 @@ export function createRegistry(ctx: Context, onRefreshed?: () => void): Registry
     install() {
       const offTools = ctx.root.on('tools/change', () => schedule())
       const offDispose = ctx.root.on('loader/partial-dispose', () => schedule())
-      const offSession = ctx.root.on('agent/session-start', () => schedule())
+      const offSession = ctx.root.on('agent/created', () => {
+        schedule()
+        return undefined
+      })
       return () => {
         offTools()
         offDispose()

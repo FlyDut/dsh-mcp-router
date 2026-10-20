@@ -290,12 +290,13 @@ export function installProjectMcp(ctx: Context, policy: PolicyStore): () => void
   const disposers: Array<() => void> = []
   disposers.push(
     ctx.effect(() => {
-      const off = ctx.root.on('agent/session-start', (payload: { agent?: { session?: { header?: { cwd?: unknown } } } }) => {
+      const off = ctx.root.on('agent/created', (payload: { agent?: { session?: { header?: { cwd?: unknown } } } }) => {
         const cwd = payload?.agent?.session?.header?.cwd
-        if (typeof cwd !== 'string' || cwd.length === 0) return
+        if (typeof cwd !== 'string' || cwd.length === 0) return undefined
         void ensureWorkspace(ctx, cwd, policy).catch((error) => {
           ctx.logger.warn?.(`dsh-mcp-router: 项目 MCP 挂载失败（${cwd}）: ${messageOf(error)}`)
         })
+        return undefined
       })
       return off
     }, 'dsh-mcp-router: project mcp session hook'),
@@ -346,7 +347,7 @@ export async function remountWorkspace(ctx: Context, root: string, policy: Polic
  * 背景：projectOwners 是模块级内存表，插件 HMR 重载即清空，而 loader 根树上的
  * projmcp-* 行仍然存在 → 期间项目工具短暂按全局展示、项目级禁用作用域错判。
  * state.json 的 projects 分区（工作空间 → serverName → 策略）保存了 owner 关系，
- * 以 loader 存活行交叉验证后重建；watcher/entries 由下次 session-start 的
+ * 以 loader 存活行交叉验证后重建；watcher/entries 由下次 agent/created 的
  * ensureWorkspace 完整恢复。
  */
 export async function rebuildOwnersFromState(ctx: Context): Promise<void> {

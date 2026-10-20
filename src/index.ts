@@ -481,10 +481,10 @@ export function apply(ctx: Context, config: Config = {}): void {
   ctx.effect(
     () => {
       let guard = false
-      const off = ctx.root.on('agent/session-start', (payload: { agent?: unknown }) => {
+      const off = ctx.root.on('agent/created', (payload: { agent?: unknown }) => {
         // 记录最近会话作用域：HTTP 面板路径下 agents 视图可能受限，用作展示兜底
         rememberSessionScope(agentPresetId(ctx, payload?.agent), agentWorkspace(payload?.agent))
-        if (guard) return
+        if (guard) return undefined
         guard = true
         void (async () => {
           const applied = await policy.commitPending()
@@ -500,6 +500,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           .finally(() => {
             guard = false
           })
+        return undefined
       })
       return off
     },
